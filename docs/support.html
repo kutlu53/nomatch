@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nomatch - Support</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: #ffffff;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, #00d4ff, #7c3aed);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .subtitle {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 1rem;
+        }
+        
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        h2 {
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+            color: #00d4ff;
+        }
+        
+        h3 {
+            font-size: 1.1rem;
+            margin: 20px 0 10px;
+            color: #7c3aed;
+        }
+        
+        p {
+            margin-bottom: 15px;
+            color: rgba(255, 255, 255, 0.85);
+        }
+        
+        ul {
+            margin-left: 20px;
+            margin-bottom: 15px;
+        }
+        
+        li {
+            margin-bottom: 8px;
+            color: rgba(255, 255, 255, 0.85);
+        }
+        
+        .highlight {
+            background: rgba(0, 212, 255, 0.1);
+            border-left: 3px solid #00d4ff;
+            padding: 15px;
+            border-radius: 0 8px 8px 0;
+            margin: 15px 0;
+        }
+        
+        .emoji {
+            font-size: 1.5rem;
+            margin-right: 10px;
+        }
+        
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            color: rgba(255, 255, 255, 0.5);
+        }
+        
+        a {
+            color: #00d4ff;
+            text-decoration: none;
+        }
+        
+        a:hover {
+            text-decoration: underline;
+        }
+        
+        .nav {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-bottom: 30px;
+        }
+        
+        .nav a {
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            transition: background 0.3s;
+        }
+        
+        .nav a:hover {
+            background: rgba(255, 255, 255, 0.2);
+            text-decoration: none;
+        }
+        
+        .nav a.active {
+            background: rgba(0, 212, 255, 0.2);
+        }
+        
+        .faq-item {
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .faq-item:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+        
+        .faq-question {
+            font-weight: 600;
+            color: #ffffff;
+            margin-bottom: 10px;
+        }
+        
+        .faq-answer {
+            color: rgba(255, 255, 255, 0.7);
+        }
+        
+        .contact-box {
+            display: flex;
+            align-items: center;
+            padding: 20px;
+            background: rgba(0, 212, 255, 0.1);
+            border-radius: 12px;
+            margin-top: 20px;
+        }
+        
+        .contact-box .emoji {
+            font-size: 2rem;
+        }
+        
+        .contact-info {
+            margin-left: 15px;
+        }
+        
+        .contact-info strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Nomatch</h1>
+            <p class="subtitle">Support & Help</p>
+        </header>
+        
+        <nav class="nav">
+            <a href="index.html">Privacy Policy</a>
+            <a href="support.html" class="active">Support</a>
+        </nav>
+        
+        <div class="card">
+            <h2><span class="emoji">📖</span>How to Play</h2>
+            <ol style="margin-left: 20px; color: rgba(255, 255, 255, 0.85);">
+                <li style="margin-bottom: 10px;">Place two phones <strong>flat on a table</strong>, facing each other</li>
+                <li style="margin-bottom: 10px;">Tap the arrow on both phones to start pairing</li>
+                <li style="margin-bottom: 10px;">Wait for the Bluetooth connection (phones will show a success animation)</li>
+                <li style="margin-bottom: 10px;">Each round, you'll see two images - tap your favorite</li>
+                <li style="margin-bottom: 10px;">After 5 rounds, see your compatibility and optionally share contact info</li>
+            </ol>
+        </div>
+        
+        <div class="card">
+            <h2><span class="emoji">❓</span>Frequently Asked Questions</h2>
+            
+            <div class="faq-item">
+                <p class="faq-question">Why won't the phones connect?</p>
+                <p class="faq-answer">Make sure both phones have Bluetooth enabled and are placed flat on a table, facing each other. The phones need to be within 1-2 meters of each other.</p>
+            </div>
+            
+            <div class="faq-item">
+                <p class="faq-question">Do I need an internet connection?</p>
+                <p class="faq-answer">No! Nomatch works completely offline. The phones communicate directly via Bluetooth.</p>
+            </div>
+            
+            <div class="faq-item">
+                <p class="faq-question">Why do the phones need to face each other?</p>
+                <p class="faq-answer">This is part of the game experience! The app uses motion sensors to verify that both players are sitting face-to-face, creating a more personal connection.</p>
+            </div>
+            
+            <div class="faq-item">
+                <p class="faq-question">Does the app collect my data?</p>
+                <p class="faq-answer">No. Nomatch is privacy-first. We don't collect any personal data, and there are no accounts required. See our <a href="index.html">Privacy Policy</a> for details.</p>
+            </div>
+            
+            <div class="faq-item">
+                <p class="faq-question">Can I play with Android and iPhone?</p>
+                <p class="faq-answer">Yes! Nomatch supports cross-platform play between iOS and Android devices.</p>
+            </div>
+            
+            <div class="faq-item">
+                <p class="faq-question">How do I change the color theme?</p>
+                <p class="faq-answer">On the pairing screen, tap the palette icon in the bottom corner to choose from different color themes.</p>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2><span class="emoji">🔧</span>Troubleshooting</h2>
+            
+            <h3>Pairing Issues</h3>
+            <ul>
+                <li>Ensure Bluetooth is enabled on both devices</li>
+                <li>Place phones flat on a stable surface</li>
+                <li>Keep phones within 1-2 meters</li>
+                <li>Try restarting the app on both devices</li>
+            </ul>
+            
+            <h3>Connection Drops</h3>
+            <ul>
+                <li>Avoid moving the phones during gameplay</li>
+                <li>Keep phones away from other Bluetooth devices</li>
+                <li>Ensure phones are not in low power mode</li>
+            </ul>
+        </div>
+        
+        <div class="card">
+            <h2><span class="emoji">📧</span>Contact Us</h2>
+            <p>Still having issues? We're here to help!</p>
+            
+            <div class="contact-box">
+                <span class="emoji">✉️</span>
+                <div class="contact-info">
+                    <strong>Email Support</strong>
+                    <a href="mailto:mehmet.kutlu.dio@gmail.com">mehmet.kutlu.dio@gmail.com</a>
+                </div>
+            </div>
+            
+            <p style="margin-top: 20px; font-size: 0.9rem; color: rgba(255, 255, 255, 0.5);">We typically respond within 24-48 hours.</p>
+        </div>
+        
+        <footer>
+            <p>© 2026 Nomatch. All rights reserved.</p>
+            <p><a href="index.html">Privacy Policy</a></p>
+        </footer>
+    </div>
+</body>
+</html>

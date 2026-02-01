@@ -1,5 +1,16 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// Gradient tipleri
+enum GradientType {
+  linear,
+  radial,
+  sweep,
+  vertical,
+  horizontal,
+  corner,
+}
 
 /// Renk paletleri - Uygulama genelinde kullanılır
 enum ColorPalette {
@@ -90,15 +101,63 @@ extension ColorPaletteExtension on ColorPalette {
     }
   }
   
-  /// Gradient oluştur
-  LinearGradient get gradient {
+  /// Linear Gradient (diagonal) - yumuşak geçiş
+  LinearGradient get gradientLinear {
     return LinearGradient(
       begin: Alignment.topLeft,
       end: Alignment.bottomRight,
       colors: colors,
-      stops: const [0.0, 0.3, 0.7, 1.0],
     );
   }
+
+  /// Radial Gradient (circular - center'dan dış taraf)
+  RadialGradient get gradientRadial {
+    return RadialGradient(
+      center: Alignment.center,
+      radius: 1.5,
+      colors: colors,
+    );
+  }
+
+  /// Sweep Gradient (döner/spiral)
+  SweepGradient get gradientSweep {
+    return SweepGradient(
+      center: Alignment.center,
+      colors: colors,
+      startAngle: 0.0,
+      endAngle: 3.14 * 2, // Full circle
+    );
+  }
+
+  /// Vertical Linear Gradient (yukarıdan aşağıya)
+  LinearGradient get gradientVertical {
+    return LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: colors,
+    );
+  }
+
+  /// Horizontal Linear Gradient (soldan sağa)
+  LinearGradient get gradientHorizontal {
+    return LinearGradient(
+      begin: Alignment.centerLeft,
+      end: Alignment.centerRight,
+      colors: colors,
+    );
+  }
+
+  /// Corner-to-corner (bottom-right to top-left)
+  LinearGradient get gradientCorner {
+    return LinearGradient(
+      begin: Alignment.bottomRight,
+      end: Alignment.topLeft,
+      colors: colors,
+    );
+  }
+
+  /// Default gradient (for backward compatibility)
+  LinearGradient get gradient => gradientLinear;
 }
 
 /// Renk paleti yöneticisi - Singleton
@@ -108,24 +167,90 @@ class ColorPaletteManager {
   ColorPaletteManager._internal();
   
   static const String _storageKey = 'selected_color_palette';
+  static const String _gradientKey = 'selected_gradient_type';
+  
   ColorPalette _currentPalette = ColorPalette.midnightMischief;
+  GradientType _currentGradientType = GradientType.linear;
   
   /// Mevcut paleti al
   ColorPalette get currentPalette => _currentPalette;
   
-  /// Paleti değiştir ve kaydet
-  Future<void> setPalette(ColorPalette palette) async {
+  /// Mevcut gradient tipini al
+  GradientType get currentGradientType => _currentGradientType;
+  
+  /// Mevcut gradient'i oluştur (yumuşak geçişler için stops yok)
+  Gradient get currentGradient {
+    final colors = _currentPalette.colors;
+    // stops kaldırıldı - Flutter otomatik eşit dağıtır = daha yumuşak geçiş
+    
+    return switch (_currentGradientType) {
+      GradientType.linear => LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: colors,
+      ),
+      GradientType.radial => RadialGradient(
+        center: Alignment.center,
+        radius: 1.5,
+        colors: colors,
+      ),
+      GradientType.sweep => SweepGradient(
+        center: Alignment.center,
+        colors: colors,
+        startAngle: 0.0,
+        endAngle: math.pi * 2,
+      ),
+      GradientType.vertical => LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: colors,
+      ),
+      GradientType.horizontal => LinearGradient(
+        begin: Alignment.centerLeft,
+        end: Alignment.centerRight,
+        colors: colors,
+      ),
+      GradientType.corner => LinearGradient(
+        begin: Alignment.bottomRight,
+        end: Alignment.topLeft,
+        colors: colors,
+      ),
+    };
+  }
+  
+  /// Paleti değiştir (kaydetme yok - sadece session için)
+  void setPalette(ColorPalette palette) {
     _currentPalette = palette;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_storageKey, palette.index);
+  }
+  
+  /// Gradient tipini değiştir (kaydetme yok - sadece session için)
+  void setGradientType(GradientType type) {
+    _currentGradientType = type;
+  }
+  
+  /// Paleti ve gradient tipini birlikte set et
+  void setTheme(ColorPalette palette, GradientType gradientType) {
+    _currentPalette = palette;
+    _currentGradientType = gradientType;
   }
   
   /// Kaydedilmiş paleti yükle
   Future<void> loadPalette() async {
     final prefs = await SharedPreferences.getInstance();
-    final index = prefs.getInt(_storageKey);
-    if (index != null && index >= 0 && index < ColorPalette.values.length) {
-      _currentPalette = ColorPalette.values[index];
+    final paletteIndex = prefs.getInt(_storageKey);
+    if (paletteIndex != null && paletteIndex >= 0 && paletteIndex < ColorPalette.values.length) {
+      _currentPalette = ColorPalette.values[paletteIndex];
     }
+    final gradientIndex = prefs.getInt(_gradientKey);
+    if (gradientIndex != null && gradientIndex >= 0 && gradientIndex < GradientType.values.length) {
+      _currentGradientType = GradientType.values[gradientIndex];
+    }
+  }
+  
+  /// Paleti ve gradient tipini kaydet
+  Future<void> saveTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_storageKey, _currentPalette.index);
+    await prefs.setInt(_gradientKey, _currentGradientType.index);
   }
 }

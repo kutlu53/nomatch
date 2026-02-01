@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
-import '../app/app_coordinator.dart';
+import '../app/pairing_manager.dart';
 
 /// Eşleşme başarı ekranı - dramatik animasyon ekranı
 class PairingSuccessScreen extends StatefulWidget {
-  final AppCoordinator coordinator;
+  final PairingManager pairingManager;
 
   const PairingSuccessScreen({
     super.key,
-    required this.coordinator,
+    required this.pairingManager,
   });
 
   @override
@@ -36,11 +36,17 @@ class _PairingSuccessScreenState extends State<PairingSuccessScreen>
 
     _controller.forward();
 
-    // Oyun başlasın 3.5 saniye sonra
-    Future.delayed(const Duration(milliseconds: 3500), () {
+    // ✅ OPTIMIZATION: Start game preparation IMMEDIATELY (parallel with animation)
+    // This way user doesn't wait after animation completes
+    print('[UI] 🎬 Animation started - preparing game in background...');
+    widget.pairingManager.prepareGame(); // Non-blocking, runs in parallel
+    
+    // ✅ When animation completes, show game immediately (preparation already done)
+    Future.delayed(const Duration(milliseconds: 3000), () async {
       if (mounted) {
-        // Oyun başlamaya devam ediyor - hiç bir şey yapmasına gerek yok
-        // Router otomatik olarak game screen'e gidecek
+        print('[UI] 🎬 Animation complete - showing game...');
+        await widget.pairingManager.showGame();
+        print('[UI] ✅ Game visible');
       }
     });
   }

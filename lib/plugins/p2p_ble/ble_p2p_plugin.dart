@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as dev;
 
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' hide DisconnectReason;
 import 'package:permission_handler/permission_handler.dart';
@@ -16,8 +17,69 @@ import 'ble_constants.dart';
 /// Supports Android-Android, iOS-iOS, and Android-iOS pairing
 class BleP2pPlugin {
   static const platform = MethodChannel('com.nomatch/ble_advertising');
+  static const peripheralChannel = MethodChannel('com.nomatch/ble_peripheral_writes');
   
   final StreamController<NomatchP2pEvent> _eventController = StreamController<NomatchP2pEvent>.broadcast();
+  
+  // Platform method call handler for receiving writes from iOS peripheral
+  BleP2pPlugin() {
+    platform.setMethodCallHandler(_handlePlatformCall);
+    peripheralChannel.setMethodCallHandler(_handlePeripheralCall);
+    dev.log('[BLE] ✅ BleP2pPlugin initialized - listening on both channels');
+  }
+  
+  Future<dynamic> _handlePlatformCall(MethodCall call) async {
+    print('[BLE-DART] 📞 Platform method call: ${call.method}');
+    dev.log('[BLE-DART] 📞 Platform method call: ${call.method}');
+    switch (call.method) {
+      case 'onCharacteristicWrite':
+        print('[BLE-DART] ✅ onCharacteristicWrite called!');
+        dev.log('[BLE-DART] ✅ onCharacteristicWrite method called with arguments type: ${call.arguments.runtimeType}');
+        _onCharacteristicWriteFromiOS(call.arguments);
+        return null;
+      default:
+        print('[BLE-DART] ⚠️ Unknown method: ${call.method}');
+        dev.log('[BLE-DART] ⚠️ Unknown platform method: ${call.method}');
+        return null;
+    }
+  }
+  
+  Future<dynamic> _handlePeripheralCall(MethodCall call) async {
+    print('[BLE-DART-PERIPH] 📞 Peripheral channel call: ${call.method}');
+    dev.log('[BLE-DART-PERIPH] 📞 Peripheral channel call: ${call.method}');
+    switch (call.method) {
+      case 'onWrite':
+        print('[BLE-DART-PERIPH] ✅ onWrite called!');
+        dev.log('[BLE-DART-PERIPH] ✅ onWrite called with data type: ${call.arguments.runtimeType}');
+        _onCharacteristicWriteFromiOS(call.arguments);
+        return null;
+      default:
+        print('[BLE-DART-PERIPH] ⚠️ Unknown method: ${call.method}');
+        dev.log('[BLE-DART-PERIPH] ⚠️ Unknown peripheral method: ${call.method}');
+        return null;
+    }
+  }
+  
+  void _onCharacteristicWriteFromiOS(dynamic arguments) {
+    print('[BLE-DART] 🔍 Processing iOS write - type: ${arguments.runtimeType}');
+    dev.log('[BLE-DART] 🔍 Processing iOS write - arguments type: ${arguments.runtimeType}');
+    if (arguments is List<int>) {
+      print('[BLE-DART] 📩 Received write: ${arguments.length} bytes');
+      dev.log('[BLE-DART] 📩 Received characteristic write from iOS peripheral (${arguments.length} bytes)');
+      dev.log('[BLE-DART]   └─ First 50 bytes: ${arguments.take(50).toList()}');
+      _onMessageReceived(arguments);
+    } else if (arguments is List && arguments.isNotEmpty) {
+      print('[BLE-DART] 📩 Casting arguments to List<int>');
+      dev.log('[BLE-DART] 📩 Attempting to cast arguments to List<int>');
+      final bytes = (arguments as List).cast<int>();
+      print('[BLE-DART] 📩 Received write (casted): ${bytes.length} bytes');
+      dev.log('[BLE-DART] 📩 Received characteristic write from iOS peripheral (${bytes.length} bytes) - casted');
+      _onMessageReceived(bytes);
+    } else {
+      print('[BLE-DART] ❌ Invalid args type: ${arguments.runtimeType}');
+      dev.log('[BLE-DART] ❌ Invalid arguments type for onCharacteristicWrite: ${arguments.runtimeType}');
+    }
+  }
   
   String? _appInstanceId;
   String? _sessionId;
@@ -31,6 +93,7 @@ class BleP2pPlugin {
   BluetoothDevice? _connectedDevice;
   BluetoothCharacteristic? _messageChar;
   BluetoothCharacteristic? _sensorChar;
+  bool _isConnecting = false; // Prevent concurrent connection attempts
   
   // Stream subscriptions for proper cleanup
   StreamSubscription<BluetoothAdapterState>? _adapterStateSub;
@@ -149,21 +212,34 @@ class BleP2pPlugin {
   
   /// Send message to connected peer
   Future<void> send(P2pMessage message) async {
+    print('[BLE-SEND] 🚀 send() called for ${message.runtimeType}');
+    
     if (_messageChar == null) {
-      dev.log('BLE_P2P: Not connected, cannot send');
+      print('[BLE-SEND] ❌ Not connected (_messageChar is null)');
+      dev.log('[BLE-SEND] ❌ Not connected, cannot send');
       return;
     }
+    
+    print('[BLE-SEND] ✅ Connected, proceeding with send');
     
     try {
       final json = message.toJson();
       final data = utf8.encode(jsonEncode(json));
       
+      print('[BLE-SEND] 📤 SENDING ${message.runtimeType} (${data.length} bytes)');
+      dev.log('[BLE-SEND] 📤 SENDING MESSAGE to peer');
+      dev.log('[BLE-SEND]   └─ Char UUID: ${_messageChar?.uuid}');
+      dev.log('[BLE-SEND]   └─ Data size: ${data.length} bytes');
+      dev.log('[BLE-SEND]   └─ Type: ${message.runtimeType}');
+      
       // BLE has MTU limit, chunk if needed
       await _sendChunked(data);
       
-      dev.log('BLE_P2P: Sent ${message.runtimeType}');
+      print('[BLE-SEND] ✅ Sent successfully!');
+      dev.log('[BLE-SEND] ✅ Sent ${message.runtimeType}');
     } catch (e) {
-      dev.log('BLE_P2P: Send failed: $e');
+      print('[BLE-SEND] ❌ Send error: $e');
+      dev.log('[BLE-SEND] ❌ Send failed: $e');
       _emitError('send_failed', e.toString());
     }
   }
@@ -251,21 +327,14 @@ class BleP2pPlugin {
       await _scanResultsSub?.cancel();
       await _isScanningStateSub?.cancel();
       
-      // Start scan without service UUID filter
-      // ⚠️ DEBUG: Service UUID advertise data'sında görünmediği için filter kapalı
-      // iOS'ta GATT service advertise data'sına otomatik eklenmemiş
-      await FlutterBluePlus.startScan(
-        // withServices: [Guid(BleConstants.serviceUuid)],  // Temporarily disabled
-        timeout: BleConstants.scanTimeout,
-      );
-      dev.log('BLE_P2P: Scanning WITHOUT service UUID filter (debug mode)');
-      
-      // Listen to scan results
+      // IMPORTANT: Subscribe to scan results BEFORE starting scan
+      // Otherwise early scan results are lost
       _scanResultsSub = FlutterBluePlus.scanResults.listen((results) {
         for (ScanResult r in results) {
           _onDeviceDiscovered(r);
         }
       });
+      dev.log('BLE_P2P: Subscribed to scan results');
       
       // Listen to scan completion
       _isScanningStateSub = FlutterBluePlus.isScanning.listen((scanning) {
@@ -274,6 +343,15 @@ class BleP2pPlugin {
           _isScanning = false;
         }
       });
+      
+      // Start scan without service UUID filter
+      // ⚠️ DEBUG: Service UUID advertise data'sında görünmediği için filter kapalı
+      // iOS'ta GATT service advertise data'sına otomatik eklenmemiş
+      await FlutterBluePlus.startScan(
+        // withServices: [Guid(BleConstants.serviceUuid)],  // Temporarily disabled
+        timeout: BleConstants.scanTimeout,
+      );
+      dev.log('BLE_P2P: Scanning WITHOUT service UUID filter (debug mode)');
     } catch (e) {
       dev.log('BLE_P2P: Scan failed: $e');
       _isScanning = false;
@@ -293,18 +371,40 @@ class BleP2pPlugin {
     final device = result.device;
     final rssi = result.rssi;
     
-    dev.log('[BLE] 📡 Device discovered: ${device.remoteId} | RSSI: ${rssi}dBm | Name: "${device.platformName}"');
+    dev.log('[BLE] 📡 DEVICE DISCOVERED: ${device.remoteId} | RSSI: ${rssi}dBm | Name: "${device.platformName}"');
     
-    // 🔍 DEBUG: Temporarily accept ALL devices to see what's being advertised
-    // if (device.platformName.isEmpty) {
-    //   dev.log('[BLE] ⚠️ Device has no name, ignoring: ${device.remoteId}');
-    //   return;
-    // }
+    // 🔍 DEBUG: Show all advertisement data
+    final advertData = result.advertisementData;
+    dev.log('[BLE]   ├─ Service UUIDs: ${advertData.serviceUuids} (count: ${advertData.serviceUuids.length})');
+    dev.log('[BLE]   ├─ Manufacturer data keys: ${advertData.manufacturerData.keys.toList()}');
+    dev.log('[BLE]   ├─ Service data keys: ${advertData.serviceData.keys.toList()}');
+    dev.log('[BLE]   └─ TX Power: ${advertData.txPowerLevel}');
     
-    // if (!device.platformName.startsWith('dev-instance')) {
-    //   dev.log('[BLE] ⚠️ Device name not recognized, ignoring: ${device.platformName}');
-    //   return;
-    // }
+    // Filter by advertised service UUID - ONLY connect to Nomatch devices!
+    final advertisedServices = result.advertisementData.serviceUuids;
+    dev.log('[BLE] 🔍 Checking if device advertises Nomatch service...');
+    dev.log('[BLE]   ├─ Looking for: ${BleConstants.nomatchServiceUUID} or ${BleConstants.serviceUuid}');
+    dev.log('[BLE]   ├─ Advertised services count: ${advertisedServices.length}');
+    
+    if (advertisedServices.isEmpty) {
+      dev.log('[BLE] ⚠️ ⚠️ Device has NO advertised service UUIDs! Likely not a Nomatch device');
+      return;
+    }
+    
+    final hasNomatchService = advertisedServices.any((uuid) {
+      final uuidStr = uuid.toString().toLowerCase();
+      final matches = uuidStr == BleConstants.nomatchServiceUUID.toLowerCase() ||
+                      uuidStr == BleConstants.serviceUuid.toLowerCase();
+      dev.log('[BLE]   ├─ Checking UUID: $uuid -> ${matches ? "✅ MATCH" : "❌ no match"}');
+      return matches;
+    });
+    
+    if (!hasNomatchService) {
+      dev.log('[BLE] ⚠️ Device does NOT advertise Nomatch service, ignoring: ${device.remoteId}');
+      return;
+    }
+    
+    dev.log('[BLE] ✅ Device advertises Nomatch service!');
     
     // Filter by RSSI (proximity check)
     if (rssi < BleConstants.minRssi || rssi > BleConstants.maxRssi) {
@@ -319,15 +419,22 @@ class BleP2pPlugin {
     // Emit peer discovered event
     _emitPeerDiscovered(peerId, rssi);
     
-    // Auto-connect if not already connected
-    if (_connectedDevice == null) {
-      dev.log('[BLE] 🔗 Attempting connection to $peerId');
-      _connectToDevice(device);
+    // Auto-connect if not already connected to this specific peer
+    // Only proceed if: (1) no device connected, (2) not already connecting, OR (3) different peer
+    if (_connectedDevice == null && !_isConnecting) {
+      if (_peerId == null || _peerId != peerId) {
+        dev.log('[BLE] 🔗 Attempting connection to $peerId');
+        _connectToDevice(device);
+      }
+    } else {
+      dev.log('[BLE] ℹ️ Cannot connect: _connectedDevice=${_connectedDevice != null}, _isConnecting=$_isConnecting');
     }
   }
   
   Future<void> _connectToDevice(BluetoothDevice device) async {
     dev.log('[BLE] 🔗 Connection sequence started for ${device.remoteId}');
+    
+    _isConnecting = true; // Prevent concurrent attempts
     
     try {
       dev.log('[BLE] 📞 Initiating BLE connection (timeout: ${BleConstants.connectionTimeout})');
@@ -343,26 +450,39 @@ class BleP2pPlugin {
       List<BluetoothService> services = await device.discoverServices();
       dev.log('[BLE] 📋 Found ${services.length} service(s)');
       
-      // Find NoMatch service
+      // Find NoMatch service (check for CUSTOM Nomatch UUID first, then legacy)
       BluetoothService? nomatchService;
+      bool hasNomatchService = false;
       for (var service in services) {
-        dev.log('[BLE]   - Service: ${service.uuid}');
-        if (service.uuid.toString() == BleConstants.serviceUuid) {
+        final serviceUuidStr = service.uuid.toString().toLowerCase();
+        dev.log('[BLE]   - Service: $serviceUuidStr');
+        
+        // Check for custom Nomatch UUID (550e8400-e29b-41d4-a716-446655440000)
+        if (serviceUuidStr == BleConstants.nomatchServiceUUID.toLowerCase()) {
           nomatchService = service;
-          dev.log('[BLE]   ✅ NoMatch service found!');
+          hasNomatchService = true;
+          dev.log('[BLE]   ✅ Nomatch service found (custom UUID)!');
+          break;
+        }
+        // Fallback to legacy UUID for compatibility
+        else if (serviceUuidStr == BleConstants.serviceUuid.toLowerCase()) {
+          nomatchService = service;
+          hasNomatchService = true; // Accept legacy service too
+          dev.log('[BLE]   ✅ Legacy service found (0000fff0) - accepting for compatibility');
           break;
         }
       }
       
-      // NOTE: Service discovery works differently on iOS vs Android
-      // Connection is successful even if GATT service isn't found in discovery
-      // The service exists but may not be enumerated in the services list
-      if (nomatchService == null) {
-        dev.log('[BLE] ⚠️ NoMatch service not found in discovery, but connection established');
-        // Continue anyway - connection is still valid
-      } else {
-        dev.log('[BLE] ✅ NoMatch service found in GATT discovery');
+      // Check if this is a valid Nomatch device
+      if (!hasNomatchService) {
+        dev.log('[BLE] ❌ No valid P2P service found - disconnecting from non-Nomatch device');
+        _connectedDevice = null;
+        await device.disconnect();
+        _emitError('invalid_device', 'Device does not have P2P service');
+        return;
       }
+      
+      dev.log('[BLE] ✅ P2P service confirmed');
       
       // Cancel previous characteristic subscriptions
       await _messageStreamSub?.cancel();
@@ -373,24 +493,37 @@ class BleP2pPlugin {
       dev.log('[BLE] 🔎 Looking for characteristics...');
       if (nomatchService != null) {
         for (var char in nomatchService.characteristics) {
-        dev.log('[BLE]   - Characteristic: ${char.uuid}');
-        if (char.uuid.toString() == BleConstants.messageCharUuid) {
-          _messageChar = char;
-          dev.log('[BLE]   ✅ Message characteristic found!');
+          final charUuidStr = char.uuid.toString().toLowerCase();
+          dev.log('[BLE]   - Characteristic: ${char.uuid}');
           
-          // Subscribe to notifications
-          await char.setNotifyValue(true);
-          _messageStreamSub = char.lastValueStream.listen(_onMessageReceived);
-          dev.log('[BLE]   ✅ Message notifications enabled');
-        } else if (char.uuid.toString() == BleConstants.sensorCharUuid) {
-          _sensorChar = char;
-          dev.log('[BLE]   ✅ Sensor characteristic found!');
-          await char.setNotifyValue(true);
-          _sensorStreamSub = char.lastValueStream.listen((value) {
-            dev.log('[BLE] 📡 Received sensor data: ${value.length} bytes');
-          });
-          dev.log('[BLE]   ✅ Sensor notifications enabled');
-        }
+          // Check for CUSTOM Nomatch UUIDs (primary)
+          if (charUuidStr == BleConstants.nomatchCharTxRx.toLowerCase()) {
+            _messageChar = char;
+            dev.log('[BLE]   ✅ Message characteristic found (Nomatch custom UUID)!');
+            
+            // Subscribe to notifications using onValueReceived for real-time updates
+            await char.setNotifyValue(true);
+            _messageStreamSub = char.onValueReceived.listen(_onMessageReceived);
+            dev.log('[BLE]   ✅ Message notifications enabled (streaming mode)');
+          }
+          // Fallback to legacy UUID for compatibility
+          else if (charUuidStr == BleConstants.messageCharUuid.toLowerCase()) {
+            _messageChar = char;
+            dev.log('[BLE]   ✅ Message characteristic found (legacy UUID)!');
+            
+            await char.setNotifyValue(true);
+            _messageStreamSub = char.onValueReceived.listen(_onMessageReceived);
+            dev.log('[BLE]   ✅ Message notifications enabled (streaming mode)');
+          } 
+          else if (charUuidStr == BleConstants.sensorCharUuid.toLowerCase()) {
+            _sensorChar = char;
+            dev.log('[BLE]   ✅ Sensor characteristic found!');
+            await char.setNotifyValue(true);
+            _sensorStreamSub = char.onValueReceived.listen((value) {
+              dev.log('[BLE] 📡 Received sensor data: ${value.length} bytes');
+            });
+            dev.log('[BLE]   ✅ Sensor notifications enabled (streaming mode)');
+          }
         }
       } else {
         dev.log('[BLE] ⚠️ Service characteristics not available, continuing without characteristic subscriptions');
@@ -405,10 +538,13 @@ class BleP2pPlugin {
       dev.log('[BLE] ✅ ✅ ✅ CONNECTED ✅ ✅ ✅');
       dev.log('[BLE]   - Peer ID: $peerId');
       dev.log('[BLE]   - My ID: $myId');
+      dev.log('[BLE]   - Comparison: "$myId".compareTo("$peerId") = ${myId.compareTo(peerId)}');
+      dev.log('[BLE]   - Is Leader (myId > peerId)? ${myId.compareTo(peerId) > 0}');
       dev.log('[BLE]   - Role: ${isLeader ? 'LEADER' : 'FOLLOWER'}');
       dev.log('[BLE]   - Session ID: $_sessionId');
       
       _emitConnected(peerId, isLeader);
+      _isConnecting = false; // Connection succeeded, allow new attempts
       
       // Listen to disconnection
       _connectionStateSub = device.connectionState.listen((state) {
@@ -421,6 +557,7 @@ class BleP2pPlugin {
       
     } catch (e) {
       dev.log('[BLE] ❌ Connection failed: $e');
+      _isConnecting = false; // Connection failed, allow retry
       _emitError('connection_failed', e.toString());
     }
   }
@@ -433,6 +570,7 @@ class BleP2pPlugin {
     _connectedDevice = null;
     _messageChar = null;
     _sensorChar = null;
+    _isConnecting = false;
   }
   
   void _onDisconnected(String peerId) {
@@ -445,14 +583,19 @@ class BleP2pPlugin {
     _emitDisconnected(peerId, 'connection_lost');
   }
   
-  void _onMessageReceived(List<int> value) {
+  /// ✅ OPTIMIZED: Process message in background isolate to avoid main thread blocking
+  void _onMessageReceived(List<int> value) async {
     if (value.isEmpty) return;
     
+    final receiveTime = DateTime.now().millisecondsSinceEpoch;
+    print('[BLE-RECV] ⏱️ Message received at $receiveTime (${value.length} bytes)');
+    
     try {
-      final jsonString = utf8.decode(value);
-      final codec = P2pCodec();
-      final message = codec.decode(jsonString);
+      // ✅ Use compute() to parse JSON in background isolate
+      final message = await compute(_parseMessageInIsolate, value);
       
+      final processTime = DateTime.now().millisecondsSinceEpoch;
+      print('[BLE-RECV] ⏱️ Message parsed at $processTime (took ${processTime - receiveTime}ms)');
       dev.log('BLE_P2P: Received ${message.runtimeType}');
       
       _emitMessageReceived(message);
@@ -462,7 +605,17 @@ class BleP2pPlugin {
   }
   
   Future<void> _sendChunked(List<int> data) async {
-    if (_messageChar == null) return;
+    print('[BLE-SEND] 📨 _sendChunked called with ${data.length} bytes');
+    dev.log('[BLE-SEND] 📨 _sendChunked called with ${data.length} bytes');
+    
+    if (_messageChar == null) {
+      print('[BLE-SEND] ❌ _messageChar is null! Cannot send');
+      dev.log('[BLE-SEND] ❌ _messageChar is null! Cannot send');
+      return;
+    }
+    
+    print('[BLE-SEND] ✅ _messageChar found: ${_messageChar?.uuid}');
+    dev.log('[BLE-SEND] ✅ _messageChar found: ${_messageChar?.uuid}');
     
     // BLE has MTU limit, send in chunks
     const chunkSize = 512 - 3; // ATT header overhead
@@ -471,8 +624,20 @@ class BleP2pPlugin {
       final end = (i + chunkSize < data.length) ? i + chunkSize : data.length;
       final chunk = data.sublist(i, end);
       
-      await _messageChar!.write(chunk, withoutResponse: false);
+      try {
+        print('[BLE-SEND] 📤 Writing chunk: bytes $i-$end (${chunk.length} bytes)');
+        await _messageChar!.write(chunk, withoutResponse: false);
+        print('[BLE-SEND] ✅ Chunk written successfully');
+        dev.log('[BLE-SEND] ✅ Chunk written: ${chunk.length} bytes at offset $i');
+      } catch (e) {
+        print('[BLE-SEND] ❌ Write failed: $e');
+        dev.log('[BLE-SEND] ❌ Write failed: $e');
+        rethrow;
+      }
     }
+    
+    print('[BLE-SEND] ✅ All chunks sent!');
+    dev.log('[BLE-SEND] ✅ All chunks sent!');
   }
   
   Future<bool> _requestPermissions() async {
@@ -566,4 +731,12 @@ class BleP2pPlugin {
         return P2pState.idle;
     }
   }
+}
+
+/// ✅ TOP-LEVEL FUNCTION: Parse BLE message in background isolate
+/// Must be top-level for compute() to work
+P2pMessage _parseMessageInIsolate(List<int> bytes) {
+  final jsonString = utf8.decode(bytes);
+  final codec = P2pCodec();
+  return codec.decode(jsonString);
 }

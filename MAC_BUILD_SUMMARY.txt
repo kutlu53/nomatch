@@ -1,0 +1,201 @@
+════════════════════════════════════════════════════════════════════════════════
+🍎 NOMATCH - MAC BUILD SUMMARY (Türkçe)
+════════════════════════════════════════════════════════════════════════════════
+
+Mac'e aktardıktan sonra yapmamız gereken işlemler:
+
+════════════════════════════════════════════════════════════════════════════════
+⚡ EN HIZLI YOL (Ctrl+C yapıştır):
+════════════════════════════════════════════════════════════════════════════════
+
+cd ~/nomatch && flutter clean && rm -rf ios/Pods ios/Podfile.lock && \
+flutter pub get && cd ios && pod repo update && pod install && cd .. && \
+open -a Simulator && sleep 5 && flutter run -v
+
+
+════════════════════════════════════════════════════════════════════════════════
+📋 11 ADIMLI YAPILACAKLAR LİSTESİ:
+════════════════════════════════════════════════════════════════════════════════
+
+1️⃣  Ortam Kontrol
+    └─ flutter doctor -v
+       ✅ Tüm yeşil olmalı
+
+2️⃣  M1/M2 Mac Kontrolü (gerekirse)
+    └─ /usr/bin/arch -x86_64 /usr/bin/uname -m
+       → "x86_64" dönmeli
+
+3️⃣  Projeye Git
+    └─ cd ~/nomatch
+
+4️⃣  Flutter Temizle
+    └─ flutter clean
+
+5️⃣  Dependencies İndir
+    └─ flutter pub get
+
+6️⃣  iOS Pods Temizle
+    └─ cd ios
+       rm -rf Pods Podfile.lock .symlinks Flutter/Flutter.podspec
+       cd ..
+
+7️⃣  Pod Install
+    └─ cd ios
+       pod repo update
+       pod install --repo-update
+       cd ..
+       ⏱️ 3-5 dakika sürebilir
+
+8️⃣  Xcode Aç
+    └─ open ios/Runner.xcworkspace
+       ⚠️ .xcodeproj AÇMA! .xcworkspace aç!
+
+9️⃣  Xcode Setup
+    └─ Runner > Signing & Capabilities > Team seç
+
+🔟 Simulator Başlat
+    └─ open -a Simulator
+       sleep 5
+
+1️⃣1️⃣ Build & Run
+    └─ flutter run -v
+       Veya Xcode'da: Product > Run (Cmd+R)
+
+
+════════════════════════════════════════════════════════════════════════════════
+🎯 BEKLENEN SONUÇ:
+════════════════════════════════════════════════════════════════════════════════
+
+✅ Splash screen (2 saniye)
+✅ Pairing ekranı açılıyor
+✅ Gradient background (dinamik renk)
+✅ Radar animation (dönen çember)
+✅ Flashlight toggle (sağ üstte)
+✅ Hiç crash yok
+
+
+════════════════════════════════════════════════════════════════════════════════
+⏱️  BUILD SÜRE TAHMİNİ:
+════════════════════════════════════════════════════════════════════════════════
+
+flutter pub get       →  1-2  min
+pod install           →  3-5  min  ⏳ YAVAŞABİLİR
+Xcode build (ilk)     →  5-10 min  ⏳⏳ ÇOK YAVAŞABİLİR
+Xcode build (cache)   →  1-2  min
+
+TOTAL (İLK DEFA):      → 15-25 dakika
+
+
+════════════════════════════════════════════════════════════════════════════════
+🔧 XCODE SETUP (ÖNEMLI):
+════════════════════════════════════════════════════════════════════════════════
+
+1. open ios/Runner.xcworkspace
+2. Sol: Runner project seçin
+3. Alt: Runner target seçin
+4. Sağ: "Signing & Capabilities" tab açın
+5. Team dropdown → Apple ID seçin ✅
+
+
+════════════════════════════════════════════════════════════════════════════════
+🛑 HATA ÇÖZÜMLERI (En Sık):
+════════════════════════════════════════════════════════════════════════════════
+
+❌ "pod install failed"
+   └─ pod cache clean --all
+      cd ios && rm Podfile.lock && pod install && cd ..
+
+❌ "Build failed"
+   └─ rm -rf ~/Library/Developer/Xcode/DerivedData/*
+      flutter clean && flutter pub get
+      cd ios && pod install && cd ..
+
+❌ "xcworkspace not found"
+   └─ cd ios && pod install && cd ..
+      open ios/Runner.xcworkspace
+
+❌ "Simulator won't start"
+   └─ xcrun simctl erase all
+      open -a Simulator
+
+❌ "Bluetooth error"
+   └─ Info.plist kontrolü (Simulator BLE desteklemez)
+      Real device test et
+
+
+════════════════════════════════════════════════════════════════════════════════
+📚 DETAYLI REHBERLER:
+════════════════════════════════════════════════════════════════════════════════
+
+📖 TRANSFER_TO_MAC_README.md    → Tam setup guide
+📖 MAC_BUILD_GUIDE.md            → Detaylı adımlar
+✅ MAC_CHECKLIST.md              → Kontrol listesi
+⚡ MAC_QUICK_REFERENCE.txt       → Hızlı referans
+🚀 QUICK_MAC_BUILD.sh            → Otomatik script
+
+
+════════════════════════════════════════════════════════════════════════════════
+💾 GEREKLİ YAZILIMLAR:
+════════════════════════════════════════════════════════════════════════════════
+
+✅ Flutter 3.3+
+✅ Xcode 14+
+✅ CocoaPods
+✅ iOS 12.0+ (deployment target)
+✅ M1/M2 Mac: Rosetta 2
+
+
+════════════════════════════════════════════════════════════════════════════════
+📝 MINIMUM INFO.PLIST KEYS:
+════════════════════════════════════════════════════════════════════════════════
+
+NSBluetoothAlwaysUsageDescription
+NSBluetoothPeripheralUsageDescription
+NSMotionUsageDescription
+NSLocalNetworkUsageDescription
+
+Kontrol: open ios/Runner/Info.plist
+
+
+════════════════════════════════════════════════════════════════════════════════
+🎬 REAL DEVICE BUILD (iPhone/iPad):
+════════════════════════════════════════════════════════════════════════════════
+
+1. Device bağla
+2. "Trust" yap (iPhone'da)
+3. flutter devices
+4. flutter run -d <device-id>
+
+
+════════════════════════════════════════════════════════════════════════════════
+🎯 BAŞARILI BUILD İŞARETLERİ:
+════════════════════════════════════════════════════════════════════════════════
+
+✅ App açılıyor
+✅ Splash screen gözüküyor
+✅ Pairing ekranına geçiyor
+✅ Radar animasyonu dönerken
+✅ Flashlight toggle tıklanabilir
+✅ Hiç crash/error yok
+
+→ BUILD BAŞARILI! 🎉
+
+
+════════════════════════════════════════════════════════════════════════════════
+💡 İPUCLARİ:
+════════════════════════════════════════════════════════════════════════════════
+
+• Pod install çok yavaşsa internet bağlantısı kontrol et
+• İlk build çok uzun sürer, endişelenme (cache'den hızlanır)
+• Simulator'da BLE test edilemiyor, real device gerekir
+• Xcode build 5+ dakika sürüyorsa ızdırap çekme, normal
+• Terminal'de verbose mode: flutter run -v
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+Sorun yaşarsan detaylı rehber oku: TRANSFER_TO_MAC_README.md
+
+BAŞARILAR! 🚀
+
+════════════════════════════════════════════════════════════════════════════════

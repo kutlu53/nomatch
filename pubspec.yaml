@@ -1,7 +1,7 @@
 name: nomatch
 description: NoMatch - offline-first P2P split-screen game (no text/icons/sound).
 publish_to: "none"
-version: 0.0.1
+version: 1.0.0+1
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -23,6 +23,16 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
+  flutter_native_splash: ^2.3.0  # ✅ Native splash screen
+
+# ✅ Native splash screen configuration
+flutter_native_splash:
+  image: assets/branding/logo_full_screen.png
+  color: "#1a1a2e"  # Fallback background (koyu lacivert)
+  fullscreen: true
+  android_12:
+    image: assets/branding/logo_full_screen.png
+    color: "#1a1a2e"
 
 flutter:
   uses-material-design: true

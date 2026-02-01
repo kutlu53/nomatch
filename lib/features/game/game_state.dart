@@ -137,6 +137,11 @@ final class GameState {
   
   /// Optional: scheduled game start time (epoch ms) for synchronization
   final int? pendingGameStartAtMs;
+  
+  /// ✅ NEW: Share/Results tracking
+  final bool? peerShared; // Rakip bilgi paylaştı mı?
+  final String? peerShareValue; // Rakıp paylaştığı bilgi
+  final Object? peerShareKind; // ShareKind (phone/social)
 
   const GameState({
     required this.phase,
@@ -145,6 +150,9 @@ final class GameState {
     required this.currentRound,
     required this.lastErrorCode,
     this.pendingGameStartAtMs,
+    this.peerShared,
+    this.peerShareValue,
+    this.peerShareKind,
   });
 
   const GameState.initial()
@@ -153,7 +161,10 @@ final class GameState {
         difference = 0,
         currentRound = null,
         lastErrorCode = null,
-        pendingGameStartAtMs = null;
+        pendingGameStartAtMs = null,
+        peerShared = null,
+        peerShareValue = null,
+        peerShareKind = null;
 
   bool get isTerminal => phase == GamePhase.terminalFail || phase == GamePhase.terminalSuccess;
 
@@ -167,6 +178,9 @@ final class GameState {
     bool clearLastErrorCode = false,
     int? pendingGameStartAtMs,
     bool clearPendingGameStartAtMs = false,
+    bool? peerShared,
+    String? peerShareValue,
+    Object? peerShareKind,
   }) {
     return GameState(
       phase: phase ?? this.phase,
@@ -175,6 +189,9 @@ final class GameState {
       currentRound: clearCurrentRound ? null : (currentRound ?? this.currentRound),
       lastErrorCode: clearLastErrorCode ? null : (lastErrorCode ?? this.lastErrorCode),
       pendingGameStartAtMs: clearPendingGameStartAtMs ? null : (pendingGameStartAtMs ?? this.pendingGameStartAtMs),
+      peerShared: peerShared ?? this.peerShared,
+      peerShareValue: peerShareValue ?? this.peerShareValue,
+      peerShareKind: peerShareKind ?? this.peerShareKind,
     );
   }
 
@@ -186,10 +203,23 @@ final class GameState {
         other.difference == difference &&
         other.currentRound == currentRound &&
         other.lastErrorCode == lastErrorCode &&
-        other.pendingGameStartAtMs == pendingGameStartAtMs;
+        other.pendingGameStartAtMs == pendingGameStartAtMs &&
+        other.peerShared == peerShared &&
+        other.peerShareValue == peerShareValue &&
+        other.peerShareKind == peerShareKind;
   }
 
   @override
-  int get hashCode => Object.hash(phase, similarity, difference, currentRound, lastErrorCode, pendingGameStartAtMs);
+  int get hashCode => Object.hash(
+    phase,
+    similarity,
+    difference,
+    currentRound,
+    lastErrorCode,
+    pendingGameStartAtMs,
+    peerShared,
+    peerShareValue,
+    peerShareKind,
+  );
 }
 

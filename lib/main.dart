@@ -3,78 +3,98 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:developer' as dev;
 
-import 'app/app_coordinator.dart';
+import 'app/pairing_manager.dart';
+import 'app/app_state.dart';
+import 'app/pairing_logic.dart';
 import 'features/game/lazy_question_provider.dart';
-import 'plugins/p2p_ble/ble_p2p_plugin.dart';  // ✅ Changed to BLE plugin
+import 'plugins/p2p_ble/ble_p2p_plugin.dart';
 import 'plugins/p2p/p2p_events.dart';
 import 'plugins/p2p/p2p_messages.dart';
 import 'ui/app_shell.dart';
+import 'ui/color_palette_manager.dart'; // ✅ Gradient/palette için
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Lock orientation to portrait only (no landscape, no upside-down)
+
+  // Lock orientation to portrait only
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
   ]);
 
-  // Placeholder, stable per dev build. Replace with a persistent id later.
-  const String appInstanceId = 'dev-instance';
+  // Get unique device ID (using UUID from flutter_blue_plus)
+  String appInstanceId = 'nomatch-device'; // fallback
+  try {
+    final platform = MethodChannel('com.nomatch/ble_advertising');
+    appInstanceId = await platform.invokeMethod('getDeviceId') ?? 'nomatch-device';
+  } catch (e) {
+    dev.log('[INIT] ⚠️ Could not get device UUID, using fallback');
+  }
 
-  // Web'de BLE çalışmaz, mock plugin kullan
-  final plugin = kIsWeb ? _MockBlePlugin() : BleP2pPlugin();  // ✅ Changed to BleP2pPlugin
-  
-  // Questions'ı lazy loading için provider oluştur
+  // BLE plugin
+  final plugin = kIsWeb ? _MockBlePlugin() : BleP2pPlugin();
+
+  // Questions provider
   final questions = LazyQuestionProvider();
 
-  final coordinator = AppCoordinator(
-    plugin: plugin,
+  // Pairing manager
+  final pairingManager = PairingManager(
+    blePlugin: plugin,
+    deviceId: appInstanceId,
     questions: questions,
-    appInstanceId: appInstanceId,
   );
 
-  // Run a quick splash while initializing.
-  runApp(_StartupApp(coordinator: coordinator, isWeb: kIsWeb));
+  runApp(MyApp(
+    pairingManager: pairingManager,
+    blePlugin: plugin,
+    questions: questions,
+    appInstanceId: appInstanceId,
+  ));
 }
 
-
-// Mock plugin for web preview
-class _MockBlePlugin extends BleP2pPlugin {  // ✅ Changed to BleP2pPlugin
+class _MockBlePlugin extends BleP2pPlugin {
   @override
   Stream<NomatchP2pEvent> get events => Stream.empty();
-  
+
   @override
   Future<void> initialize({required String appInstanceId}) async {}
-  
+
   @override
   Future<void> startHosting({required String displayNameHash, String? sessionConfigJson}) async {}
-  
+
   @override
   Future<void> startDiscovery() async {}
-  
+
   @override
   Future<void> stop() async {}
-  
+
   @override
   Future<void> connect({required String peerId}) async {}
-  
+
   @override
   Future<void> send(P2pMessage message) async {}
-  
+
   @override
   Future<void> dispose() async {}
 }
 
-class _StartupApp extends StatefulWidget {
-  final AppCoordinator coordinator;
-  final bool isWeb;
-  const _StartupApp({required this.coordinator, required this.isWeb});
+class MyApp extends StatefulWidget {
+  final PairingManager pairingManager;
+  final BleP2pPlugin blePlugin;
+  final LazyQuestionProvider questions;
+  final String appInstanceId;
+
+  const MyApp({
+    required this.pairingManager,
+    required this.blePlugin,
+    required this.questions,
+    required this.appInstanceId,
+  });
 
   @override
-  State<_StartupApp> createState() => _StartupAppState();
+  State<MyApp> createState() => _MyAppState();
 }
 
-class _StartupAppState extends State<_StartupApp> with WidgetsBindingObserver {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   bool _ready = false;
 
   @override
@@ -83,73 +103,79 @@ class _StartupAppState extends State<_StartupApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _init();
   }
-  
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    // Dispose coordinator and cleanup BLE resources
-    widget.coordinator.dispose();
+    widget.pairingManager.dispose();
+    widget.blePlugin.dispose();
     super.dispose();
-  }
-  
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    super.didChangeAppLifecycleState(state);
-    
-    switch (state) {
-      case AppLifecycleState.resumed:
-        widget.coordinator.onAppResumed();
-        break;
-      case AppLifecycleState.paused:
-        widget.coordinator.onAppPaused();
-        break;
-      default:
-        break;
-    }
   }
 
   Future<void> _init() async {
-    // Initialize coordinator and questions in parallel
-    dev.log("STARTUP: begin");
-    
-    // Start both tasks in parallel
-    final coordinatorInit = widget.coordinator.initialize();
-    final questionsPreload = widget.coordinator.preloadQuestions();
-    
-    dev.log("STARTUP: initializing coordinator and preloading questions (parallel)");
     try {
-      await Future.wait([coordinatorInit, questionsPreload]);
-      dev.log("STARTUP: coordinator init and questions preload done");
+      print('[INIT] 🚀 Initializing app...');
+      
+      // ✅ Minimum 3 saniye splash göster
+      final splashTimer = Future.delayed(const Duration(seconds: 3));
+      
+      // Paralel olarak initialization yap
+      await Future.wait([
+        splashTimer,
+        _initializeApp(),
+      ]);
+      
+      print('[INIT] ✅ App ready (after 3s splash)');
+      if (mounted) setState(() => _ready = true);
     } catch (e) {
-      dev.log("STARTUP: init error: $e");
+      print('[INIT] ❌ Init error: $e');
+      dev.log('Init error: $e');
     }
-    
-    if (mounted) setState(() => _ready = true);
-    dev.log("STARTUP: ready=true");
+  }
+  
+  Future<void> _initializeApp() async {
+    await widget.blePlugin.initialize(appInstanceId: widget.appInstanceId);
+    await widget.questions.preload();
+    await ColorPaletteManager().loadPalette(); // ✅ Kaydedilmiş gradient/palette yükle
   }
 
   @override
   Widget build(BuildContext context) {
-    // Native splash stays until ready, then show AppShell directly
+    // ✅ SPLASH: Full screen logo only (no gradient, no text)
     if (!_ready) {
-      return const MaterialApp(
-        home: Scaffold(
-          backgroundColor: Colors.black,
-          body: SizedBox.shrink(), // Empty, native splash is visible
-        ),
+      return MaterialApp(
         debugShowCheckedModeBanner: false,
+        home: Scaffold(
+          body: SizedBox.expand(
+            child: Image.asset(
+              'assets/branding/logo_full_screen.webp',
+              fit: BoxFit.cover, // Tam ekran kaplasın
+              errorBuilder: (context, error, stackTrace) {
+                // Fallback to PNG
+                return Image.asset(
+                  'assets/branding/logo_full_screen.png',
+                  fit: BoxFit.cover,
+                );
+              },
+            ),
+          ),
+        ),
       );
     }
-    
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         splashFactory: NoSplash.splashFactory,
         highlightColor: Colors.transparent,
         splashColor: Colors.transparent,
+        scaffoldBackgroundColor: Colors.transparent,
       ),
-      home: AppShell(coordinator: widget.coordinator),
+      home: AppShell(
+        pairingManager: widget.pairingManager,
+        blePlugin: widget.blePlugin,
+        questions: widget.questions,
+      ),
     );
   }
 }
-

@@ -49,6 +49,11 @@ final class ManifestQuestionBank implements QuestionProvider {
   int _i = 0;
 
   ManifestQuestionBank._(this._order, this._byId);
+  
+  /// Reset iterator for new session
+  void resetIterator() {
+    _i = 0;
+  }
 
   static Future<ManifestQuestionBank> loadFromAsset(
     String assetPath, {

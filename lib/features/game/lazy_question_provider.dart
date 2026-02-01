@@ -8,19 +8,20 @@ class LazyQuestionProvider implements QuestionProvider {
   bool _loading = false;
   
   Future<void> _ensureLoaded() async {
-    if (_loaded != null || _loading) return;
+    if (_loaded != null || _loading) {
+      dev.log("QUESTIONS: _ensureLoaded - already loaded or loading: _loaded=${_loaded != null}, _loading=$_loading");
+      return;
+    }
     _loading = true;
     
     try {
-      dev.log("QUESTIONS: lazy loading started");
-      // Random seed for question shuffling
-      final seed = math.Random().nextInt(1000000);
-      dev.log("QUESTIONS: using random seed: $seed");
+      dev.log("QUESTIONS: lazy loading started (without seed - will be set by reshuffleForSession)");
+      // ✅ Load without seed - reshuffleForSession will set the proper seed
       _loaded = await ManifestQuestionBank.loadFromAsset(
         'assets/questions/questions_manifest.json',
-        seed: seed,
+        seed: null,  // ✅ No seed initially
       );
-      dev.log("QUESTIONS: lazy loading completed with shuffled questions");
+      dev.log("QUESTIONS: lazy loading completed - _loaded is now ${_loaded != null ? "LOADED" : "NULL"}");
     } catch (e) {
       dev.log("QUESTIONS: lazy loading failed: $e");
       _loaded = _FallbackQuestionProvider();
@@ -34,9 +35,18 @@ class LazyQuestionProvider implements QuestionProvider {
     if (_loaded == null) {
       // Henüz yüklenmemişse fallback döndür
       dev.log("QUESTIONS: getById called before loading, using fallback");
+      final fallback = _FallbackQuestionProvider().getById(qid);
+      dev.log("QUESTIONS: fallback getById($qid) -> top=${fallback.topAsset}, bottom=${fallback.bottomAsset}");
+      return fallback;
+    }
+    try {
+      final pair = _loaded!.getById(qid);
+      dev.log("QUESTIONS: getById($qid) -> top=${pair.topAsset}, bottom=${pair.bottomAsset}");
+      return pair;
+    } catch (e) {
+      dev.log("QUESTIONS: getById($qid) error: $e, using fallback");
       return _FallbackQuestionProvider().getById(qid);
     }
-    return _loaded!.getById(qid);
   }
 
   @override
@@ -54,18 +64,29 @@ class LazyQuestionProvider implements QuestionProvider {
     await _ensureLoaded();
   }
   
-  /// Session başladığında soruları yeniden karıştır
-  Future<void> reshuffleForSession(String sessionId) async {
-    // Session ID'den deterministic seed üret
-    final seed = sessionId.hashCode.abs() % 1000000;
-    dev.log("QUESTIONS: reshuffling with session-based seed: $seed (from sessionId: $sessionId)");
+  /// Session başladığında soruları belirtilen seed ile karıştır
+  Future<void> reshuffleForSession(String sessionId, [int? explicitSeed]) async {
+    // Eğer henüz load olmadıysa load et
+    await _ensureLoaded();
     
-    _loaded = await ManifestQuestionBank.loadFromAsset(
-      'assets/questions/questions_manifest.json',
-      seed: seed,
-    );
+    // ✅ Use explicit seed if provided (from leader), otherwise use default
+    final int seed = explicitSeed ?? 0;
+    dev.log("QUESTIONS: reshuffling with seed: $seed");
     
-    dev.log("QUESTIONS: reshuffle completed - both devices will have same order");
+    try {
+      // ✅ Completely reload with seed
+      _loaded = await ManifestQuestionBank.loadFromAsset(
+        'assets/questions/questions_manifest.json',
+        seed: seed,
+      );
+      dev.log("QUESTIONS: ✅ reshuffle completed - new order with seed=$seed");
+    } catch (e) {
+      dev.log("QUESTIONS: ❌ ERROR during reshuffle: $e");
+      // Fallback: error durumunda iterator reset et
+      if (_loaded is ManifestQuestionBank) {
+        (_loaded as ManifestQuestionBank).resetIterator();
+      }
+    }
   }
 }
 

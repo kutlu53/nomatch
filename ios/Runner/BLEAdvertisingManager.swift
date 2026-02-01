@@ -3,175 +3,172 @@ import CoreBluetooth
 
 class BLEAdvertisingManager: NSObject, CBPeripheralManagerDelegate {
   private var peripheralManager: CBPeripheralManager?
-  private var isAdvertising = false
-  private var gattService: CBMutableService?
-  private var pendingAdvertisingData: [String: Any]?
-  private var serviceAddedCompletion: ((Error?) -> Void)?
+  private var nomatchService: CBMutableService?
+  private var serviceAddedSemaphore: DispatchSemaphore?
+  var onCharacteristicWrite: ((_ data: Data) -> Void)?  // Callback for write events
+  
+  // Nomatch-specific UUIDs (must match Dart side)
+  static let NOMATCH_SERVICE_UUID = CBUUID(string: "550e8400-e29b-41d4-a716-446655440000")
+  static let NOMATCH_CHAR_TX_RX = CBUUID(string: "550e8400-e29b-41d4-a716-446655440001")
+  static let NOMATCH_CHAR_CONTROL = CBUUID(string: "550e8400-e29b-41d4-a716-446655440002")
   
   override init() {
     super.init()
-    // Initialize peripheral manager on main thread
-    DispatchQueue.main.async { [weak self] in
-      self?.peripheralManager = CBPeripheralManager(delegate: self, queue: nil)
-    }
+    peripheralManager = CBPeripheralManager(delegate: self, queue: .main)
   }
   
-  func startAdvertising(
-    serviceUuid: String,
-    deviceName: String,
-    completion: @escaping (Error?) -> Void
-  ) {
-    DispatchQueue.main.async { [weak self] in
-      guard let self = self else {
-        completion(NSError(domain: "BLEAdvertisingManager", code: -1, userInfo: nil))
-        return
-      }
-      
-      // Check if peripheral manager is ready
-      guard let peripheralManager = self.peripheralManager else {
-        completion(NSError(domain: "BLEAdvertisingManager", code: -2, userInfo: [NSLocalizedDescriptionKey: "Peripheral manager not initialized"]))
-        return
-      }
-      
-      // Wait for powered on state
-      if peripheralManager.state != .poweredOn {
-        print("[BLE-iOS] ⏳ Waiting for Bluetooth to be powered on...")
-        // Try again in a moment
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-          self.startAdvertising(serviceUuid: serviceUuid, deviceName: deviceName, completion: completion)
-        }
-        return
-      }
-      
-      // Convert UUID string to CBUUID
-      let uuid = CBUUID(string: serviceUuid)
-      
-      // ⬆️ Advertising data with long-range optimization
-      // Include service UUID in advertising packet so scanners can find us
-      // This is critical for iOS GATT discovery to work reliably
-      var advertisingData: [String: Any] = [
-        CBAdvertisementDataLocalNameKey: deviceName,
-        CBAdvertisementDataServiceUUIDsKey: [uuid]
+  func startAdvertising(serviceUuid: String, deviceName: String, completion: @escaping (Error?) -> Void) {
+    print("[BLE-ADV] 🚀 Starting BLE advertising")
+    print("[BLE-ADV]   Service UUID: \(serviceUuid)")
+    print("[BLE-ADV]   Device Name: \(deviceName)")
+    
+    guard let peripheral = peripheralManager, peripheral.state == .poweredOn else {
+      print("[BLE-ADV] ❌ Peripheral manager not ready")
+      completion(NSError(domain: "BLE", code: -1, userInfo: nil))
+      return
+    }
+    
+    // Check if service already exists (don't create duplicates)
+    if nomatchService != nil {
+      print("[BLE-ADV] ℹ️ Nomatch service already exists - not creating duplicate")
+      // Just update device name and start advertising again
+      let advertisingData: [String: Any] = [
+        CBAdvertisementDataServiceUUIDsKey: [BLEAdvertisingManager.NOMATCH_SERVICE_UUID],
+        CBAdvertisementDataLocalNameKey: deviceName
       ]
       
-      // iOS 14+: Hint for Coded PHY (long-range, 200m+)
-      if #available(iOS 14.0, *) {
-        // Note: CBPeripheralManager doesn't directly expose PHY selection,
-        // but iOS automatically uses better encoding when available
-        print("[BLE-iOS] iOS 14+ detected: Coded PHY auto-optimization eligible")
-      }
+      peripheral.startAdvertising(advertisingData)
+      print("[BLE-ADV] ✅ Advertising started with existing service")
+      print("[BLE-ADV]   └─ Device name: \(deviceName)")
+      completion(nil)
+      return
+    }
+    
+    // Create Nomatch service with custom UUIDs
+    let txRxChar = CBMutableCharacteristic(
+      type: BLEAdvertisingManager.NOMATCH_CHAR_TX_RX,
+      properties: [.read, .write, .notify],
+      value: nil,
+      permissions: [.readable, .writeable]
+    )
+    
+    let controlChar = CBMutableCharacteristic(
+      type: BLEAdvertisingManager.NOMATCH_CHAR_CONTROL,
+      properties: [.read, .write],
+      value: nil,
+      permissions: [.readable, .writeable]
+    )
+    
+    let service = CBMutableService(type: BLEAdvertisingManager.NOMATCH_SERVICE_UUID, primary: true)
+    service.characteristics = [txRxChar, controlChar]
+    
+    // Create semaphore to wait for service to be added
+    serviceAddedSemaphore = DispatchSemaphore(value: 0)
+    
+    // Add service to peripheral
+    peripheral.add(service)
+    nomatchService = service
+    
+    print("[BLE-ADV] ✅ Nomatch service created with UUID: \(BLEAdvertisingManager.NOMATCH_SERVICE_UUID)")
+    print("[BLE-ADV]   └─ Characteristic 1: \(BLEAdvertisingManager.NOMATCH_CHAR_TX_RX)")
+    print("[BLE-ADV]   └─ Characteristic 2: \(BLEAdvertisingManager.NOMATCH_CHAR_CONTROL)")
+    
+    // Start advertising after service is confirmed added
+    DispatchQueue.global().async { [weak self] in
+      // Wait for service to be added (max 5 seconds)
+      let result = self?.serviceAddedSemaphore?.wait(timeout: .now() + 5.0)
       
-      // Store advertising data for completion callback
-      self.pendingAdvertisingData = advertisingData
-      self.serviceAddedCompletion = completion
-      
-      // ✅ Create and add GATT Service for discovery if not already added
-      // CRITICAL: Only add service ONCE. Reusing existing service preserves it
-      if self.gattService == nil {
-        let service = CBMutableService(type: uuid, primary: true)
+      DispatchQueue.main.async {
+        let advertisingData: [String: Any] = [
+          CBAdvertisementDataServiceUUIDsKey: [BLEAdvertisingManager.NOMATCH_SERVICE_UUID],
+          CBAdvertisementDataLocalNameKey: deviceName
+        ]
         
-        // Add a characteristic so the service is discoverable
-        let characteristic = CBMutableCharacteristic(
-          type: CBUUID(string: "0000fff1-0000-1000-8000-00805f9b34fb"),
-          properties: [.read, .write, .notify],
-          value: nil,
-          permissions: [.readable, .writeable]
-        )
-        service.characteristics = [characteristic]
+        peripheral.startAdvertising(advertisingData)
+        print("[BLE-ADV] ✅ Advertising started successfully!")
+        print("[BLE-ADV]   └─ Device name: \(deviceName)")
+        print("[BLE-ADV]   └─ Advertising data keys: \(advertisingData.keys.joined(separator: ", "))")
         
-        self.gattService = service
-        
-        // Add service to peripheral manager
-        peripheralManager.add(service)
-        print("[BLE-iOS] 📋 GATT Service added: \(serviceUuid)")
-      } else {
-        print("[BLE-iOS] ℹ️ GATT Service already registered, reusing...")
-      }
-      
-      // CRITICAL: Give iOS sufficient time to properly register the service
-      // before advertising. This ensures GATT discovery will find the service.
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-        guard let self = self, let pm = self.peripheralManager else { return }
-        
-        print("[BLE-iOS] 📋 Service registration delay complete, starting advertising...")
-        
-        // Now start advertising after service is fully registered
-        if let advData = self.pendingAdvertisingData {
-          pm.startAdvertising(advData)
-          self.isAdvertising = true
-          print("[BLE-iOS] ✅ Advertising started (after 500ms service registration delay)")
-          self.serviceAddedCompletion?(nil)
-          self.serviceAddedCompletion = nil
-        }
+        completion(nil)
       }
     }
   }
   
   func stopAdvertising(completion: @escaping (Error?) -> Void) {
-    DispatchQueue.main.async { [weak self] in
-      guard let self = self, let peripheralManager = self.peripheralManager else {
-        completion(NSError(domain: "BLEAdvertisingManager", code: -1, userInfo: nil))
-        return
-      }
-      
-      peripheralManager.stopAdvertising()
-      self.isAdvertising = false
-      
-      // ✅ IMPORTANT: Do NOT remove the service!
-      // Keep it in the peripheral manager so it remains discoverable
-      // via GATT even when advertising is temporarily stopped
-      print("[BLE-iOS] 📣 Stopped advertising (service remains in peripheral manager)")
-      
-      completion(nil)
+    print("[BLE-ADV] 🛑 Stopping BLE advertising")
+    
+    guard let peripheral = peripheralManager else {
+      completion(NSError(domain: "BLE", code: -1, userInfo: nil))
+      return
     }
+    
+    peripheral.stopAdvertising()
+    print("[BLE-ADV] ✅ Advertising stopped")
+    
+    completion(nil)
   }
   
   // MARK: - CBPeripheralManagerDelegate
   
   func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
-    print("[BLE-iOS] Peripheral state changed: \(peripheral.state.rawValue)")
-    
     switch peripheral.state {
     case .poweredOn:
-      print("[BLE-iOS] ✅ Bluetooth is powered on")
-      // Restart advertising if needed
-      if isAdvertising && !peripheral.isAdvertising {
-        print("[BLE-iOS] Restarting advertising after state change")
-      }
+      print("[BLE-ADV] ✅ Bluetooth is powered ON")
     case .poweredOff:
-      print("[BLE-iOS] ❌ Bluetooth is powered off")
+      print("[BLE-ADV] ❌ Bluetooth is powered OFF")
     case .resetting:
-      print("[BLE-iOS] 🔄 Bluetooth is resetting")
+      print("[BLE-ADV] ⚠️ Bluetooth is resetting")
     case .unauthorized:
-      print("[BLE-iOS] ❌ Bluetooth is unauthorized")
+      print("[BLE-ADV] ❌ Bluetooth access unauthorized")
     case .unsupported:
-      print("[BLE-iOS] ❌ Bluetooth is not supported")
-    case .unknown:
-      print("[BLE-iOS] ❓ Bluetooth state is unknown")
-    @unknown default:
-      print("[BLE-iOS] ❓ Unknown Bluetooth state")
+      print("[BLE-ADV] ❌ Bluetooth not supported")
+    default:
+      print("[BLE-ADV] ❓ Bluetooth state unknown")
+    }
+  }
+  
+  func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
+    if let error = error {
+      print("[BLE-ADV] ❌ Failed to add service: \(error.localizedDescription)")
+    } else {
+      print("[BLE-ADV] ✅ Service added successfully: \(service.uuid)")
+      // Signal that service has been added
+      if service.uuid == BLEAdvertisingManager.NOMATCH_SERVICE_UUID {
+        print("[BLE-ADV] 🔔 Nomatch service confirmed added - signaling semaphore")
+        serviceAddedSemaphore?.signal()
+      }
     }
   }
   
   func peripheralManager(
     _ peripheral: CBPeripheralManager,
-    didAdd service: CBService,
-    error: Error?
+    didReceiveRead request: CBATTRequest
   ) {
-    if let error = error {
-      print("[BLE-iOS] ❌ Error adding service: \(error)")
-      return
-    }
-    
-    print("[BLE-iOS] ✅ Service confirmed added to peripheral: \(service.uuid)")
-    print("[BLE-iOS]   This service will be discoverable via GATT after connection")
+    print("[BLE-ADV] 📖 Received read request for: \(request.characteristic.uuid)")
+    peripheral.respond(to: request, withResult: .success)
   }
   
-  func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
-    if let error = error {
-      print("[BLE-iOS] Error starting advertising: \(error)")
-    } else {
-      print("[BLE-iOS] ✅ Advertising started successfully")
+  func peripheralManager(
+    _ peripheral: CBPeripheralManager,
+    didReceiveWrite requests: [CBATTRequest]
+  ) {
+    for request in requests {
+      print("[BLE-ADV] ✍️ Received write request for: \(request.characteristic.uuid)")
+      print("[BLE-ADV]   └─ Data size: \(request.value?.count ?? 0) bytes")
+      
+      // Respond to client
+      peripheral.respond(to: request, withResult: .success)
+      
+      // Forward data to Dart if callback is set
+      if let data = request.value {
+        if request.characteristic.uuid == BLEAdvertisingManager.NOMATCH_CHAR_TX_RX {
+          print("[BLE-ADV] ✅ Message characteristic write - forwarding to Dart")
+          print("[BLE-ADV]   └─ Callback set: \(onCharacteristicWrite != nil)")
+          onCharacteristicWrite?(data)
+        } else {
+          print("[BLE-ADV] ⚠️ Write to different characteristic: \(request.characteristic.uuid)")
+        }
+      }
     }
   }
 }

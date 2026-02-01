@@ -1,0 +1,207 @@
+════════════════════════════════════════════════════════════════════════════════
+🍎 NOMATCH - MAC BUILD - BURADAN BAŞLA
+════════════════════════════════════════════════════════════════════════════════
+
+Mac'e projeyi aktardıktan sonra BU DOSYAYI OKU!
+
+════════════════════════════════════════════════════════════════════════════════
+⚡ 1 DAKİKADE BUILD (COPY-PASTE):
+════════════════════════════════════════════════════════════════════════════════
+
+Terminale bunu yapıştır ve Enter'a bas:
+
+cd ~/nomatch && flutter clean && rm -rf ios/Pods ios/Podfile.lock && \
+flutter pub get && cd ios && pod repo update && pod install && cd .. && \
+open -a Simulator && sleep 5 && flutter run -v
+
+
+Bekle... 15-25 dakika sonra app açılmalı.
+
+
+════════════════════════════════════════════════════════════════════════════════
+📚 İLERİ ADIMLAR (DETAY İSTİYORSAN):
+════════════════════════════════════════════════════════════════════════════════
+
+1. HIZLI KONTROL
+   └─ MAC_BUILD_SUMMARY.txt      → 2 dakika oku
+
+2. ADIM ADIM YAPILACAKLAR
+   └─ MAC_CHECKLIST.md            → Kontrol listesi takip et
+
+3. DETAYLI SETUP GUIDE
+   └─ MAC_BUILD_GUIDE.md          → Sorun yaşarsan oku
+
+4. HIZLI REFERANS
+   └─ MAC_QUICK_REFERENCE.txt     → Komutları kopyala
+
+5. TRANSFER & SETUP
+   └─ TRANSFER_TO_MAC_README.md   → Tam başlangıç guide
+
+6. OTOMATIK SCRIPT (BASH)
+   └─ QUICK_MAC_BUILD.sh          → bash QUICK_MAC_BUILD.sh
+
+
+════════════════════════════════════════════════════════════════════════════════
+🎯 BU DOSYALARI İLK ÇALIŞTIĞINDA OKUMAN GEREK:
+════════════════════════════════════════════════════════════════════════════════
+
+📖 1. TRANSFER_TO_MAC_README.md
+      → Mac'e aktarırken ne yapman gerektiğini anlatır
+      → 11 adımı içerir
+
+✅ 2. MAC_CHECKLIST.md
+      → Tüm adımları kontrol listelemek için
+      → Adım adım tıkla
+
+
+════════════════════════════════════════════════════════════════════════════════
+🚀 ÇOK HIZLI BUILD (Uzman modunda):
+════════════════════════════════════════════════════════════════════════════════
+
+Komutu terminalde çalıştır:
+
+cd ~/nomatch && \
+flutter clean && \
+rm -rf ios/Pods ios/Podfile.lock && \
+flutter pub get && \
+cd ios && \
+pod repo update && \
+pod install && \
+cd .. && \
+open -a Simulator && \
+sleep 5 && \
+flutter run -v
+
+
+════════════════════════════════════════════════════════════════════════════════
+⏱️  BEKLENEN SÜRELER:
+════════════════════════════════════════════════════════════════════════════════
+
+flutter pub get      → 1-2 dakika
+pod install          → 3-5 dakika   ⏳ (internet bağlantısına göre değişir)
+Xcode build          → 5-10 dakika  ⏳⏳ (ilk defa uzun)
+flutter run          → 2-3 dakika
+
+TOTAL:                → 15-25 dakika (ilk defa)
+
+
+════════════════════════════════════════════════════════════════════════════════
+✅ BEKLEDIĞIN ÇIKTI:
+════════════════════════════════════════════════════════════════════════════════
+
+Şunlar gözükmeli:
+
+✅ "flutter pub get" mesajı
+✅ "pod install" başarılı
+✅ Xcode build yapılıyor (% göstergesi)
+✅ "Launching lib/main.dart on iPhone..."
+✅ Splash screen (2 saniye)
+✅ Pairing ekranı açılıyor
+✅ Radar animation (dönen çember)
+✅ Gradient background
+
+
+════════════════════════════════════════════════════════════════════════════════
+❌ HATA YAŞARSAN:
+════════════════════════════════════════════════════════════════════════════════
+
+1. HATA MESAJINI KOP-YA-LA
+
+2. MAC_BUILD_GUIDE.md AÇ ve "TROUBLESHOOTING" bölümünü oku
+
+3. En sık hatalar:
+   • "pod install failed"     → MAC_BUILD_GUIDE.md (Problem 1)
+   • "Build failed"           → MAC_BUILD_GUIDE.md (Problem 2)
+   • "xcworkspace not found"  → MAC_BUILD_GUIDE.md (Problem 3)
+   • "Simulator won't start"  → MAC_BUILD_GUIDE.md (Problem 4)
+
+
+════════════════════════════════════════════════════════════════════════════════
+🔍 GEREKLİLER (Mac'te var mı kontrol et):
+════════════════════════════════════════════════════════════════════════════════
+
+Terminal'de çalıştır:
+
+flutter --version      → 3.3 veya daha yeni olmalı
+flutter doctor -v      → Tüm ✅ olmalı (yeşil renk)
+xcode-select --print-path
+pod --version
+
+
+════════════════════════════════════════════════════════════════════════════════
+📋 HIZLI AKIŞ DIAGRAMI:
+════════════════════════════════════════════════════════════════════════════════
+
+1. flutter pub get      ← Dependencies indir
+                ↓
+2. pod install         ← iOS pods indir (YAVAS - 3-5 min)
+                ↓
+3. Xcode setup         ← Team seç (MANUEL - Xcode'da)
+                ↓
+4. flutter run         ← Build et ve çalıştır
+                ↓
+5. ✅ App açılıyor!    ← Splash → Pairing → Success!
+
+
+════════════════════════════════════════════════════════════════════════════════
+🎯 BAŞARILI BUILD KONTROL:
+════════════════════════════════════════════════════════════════════════════════
+
+App'i aç ve kontrol et:
+
+□ Splash screen göze gözüküyor (2 saniye)
+□ Pairing ekranı açılıyor
+□ Gradient renk background var
+□ Radar animasyonu dönerken (dönen çember)
+□ Flashlight toggle var (sağ üstte)
+□ Hiç kırmızı hata yok
+□ App crash etmiyor
+
+Hepsi ✅ ise → BUILD BAŞARILI! 🎉
+
+
+════════════════════════════════════════════════════════════════════════════════
+💡 İPUCLARI:
+════════════════════════════════════════════════════════════════════════════════
+
+• Pod install yavaşsa: Café'de kahve al ☕
+• Xcode build uzunsa: Endişelenme, ilk defa normal
+• Simulator başlamıyorsa: İnternet bağlantısı kontrol et
+• Build hata verirse: Verbose mode aç: flutter run -v
+• BLE test yapacaksan: Simulator değil, real device gerek
+• Mac silent mi? Build devam ediyor, bekle...
+• Terminal kapalı kalsın, build devam edebilir
+
+
+════════════════════════════════════════════════════════════════════════════════
+📚 REFERANS:
+════════════════════════════════════════════════════════════════════════════════
+
+Dosyalar bu klasörde:
+
+MAC_BUILD_SUMMARY.txt        → Quick summary (3 min)
+MAC_QUICK_REFERENCE.txt      → Komutlar & tips
+MAC_CHECKLIST.md             → Adım adım kontrol listesi
+MAC_BUILD_GUIDE.md           → Detaylı troubleshooting
+TRANSFER_TO_MAC_README.md    → Tam setup guide
+QUICK_MAC_BUILD.sh           → Bash script (otomatik)
+
+
+════════════════════════════════════════════════════════════════════════════════
+🎬 NEXT STEPS (BUILD TAMAMDIKTAN SONRA):
+════════════════════════════════════════════════════════════════════════════════
+
+1. ✅ App açıldı → Pairing ekranı test et
+2. ✅ Radar çalışıyor → İki device bağla (P2P pairing)
+3. ✅ Face-to-face validation → Sensörleri test et
+4. ✅ Game çalışıyor → Bir round oyna
+
+Başarılar! 🚀
+
+
+════════════════════════════════════════════════════════════════════════════════
+
+En sık sorulan: "Pod install neden bu kadar yavaş?"
+Cevap: Normal. CocoaPods bağımlılıkları indiriyor. Kahve al ☕
+
+════════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,145 @@
+════════════════════════════════════════════════════════════════
+🍎 NOMATCH - MAC BUILD QUICK REFERENCE
+════════════════════════════════════════════════════════════════
+
+📝 MAC'E AKTARDIKTAN SONRA BU KOMUTU ÇALIŞTİR:
+
+cd ~/nomatch && flutter clean && rm -rf ios/Pods ios/Podfile.lock && \
+flutter pub get && cd ios && pod repo update && pod install && cd .. && \
+open -a Simulator && sleep 5 && flutter run -v
+
+
+═══ VEYA ADIM ADIM ═══════════════════════════════════════════════
+
+1. PRE-BUILD
+   flutter --version
+   flutter doctor -v
+   ✅ Tüm yeşil olmalı
+
+2. CLEAN
+   cd ~/nomatch
+   flutter clean
+
+3. DEPENDENCIES
+   flutter pub get
+
+4. COCOAPODS
+   cd ios
+   rm -rf Pods Podfile.lock .symlinks Flutter/Flutter.podspec
+   pod repo update
+   pod install --repo-update
+   cd ..
+
+5. XCODE SETUP
+   open ios/Runner.xcworkspace
+   → Runner target > Signing & Capabilities > Team seç
+
+6. SIMULATOR
+   open -a Simulator
+   sleep 5
+
+7. RUN
+   flutter run -v
+   Veya: Xcode'da Product > Run (Cmd+R)
+
+
+═══ EXPECTED OUTPUT ════════════════════════════════════════════
+
+✅ Splash screen (2 saniye)
+✅ Pairing screen
+✅ Radar animation çalışıyor
+✅ Gradient background
+✅ Flashlight toggle (sağ üstte)
+
+
+═══ COMMON PROBLEMS & FIXES ═══════════════════════════════════
+
+❌ "pod install failed"
+   → pod cache clean --all && cd ios && pod install && cd ..
+
+❌ "Build failed"
+   → rm -rf ~/Library/Developer/Xcode/DerivedData/*
+   → flutter clean && flutter pub get
+
+❌ "xcworkspace not found"
+   → cd ios && pod install && cd .. && open ios/Runner.xcworkspace
+
+❌ "Simulator won't start"
+   → xcrun simctl erase all && open -a Simulator
+
+
+═══ MINIMUM REQUIREMENTS ══════════════════════════════════════
+
+✅ Flutter 3.3+
+✅ Xcode 14+
+✅ CocoaPods
+✅ iOS 12.0+
+✅ (M1/M2 Mac): Rosetta 2
+
+
+═══ BUILD TIMES ═══════════════════════════════════════════════
+
+⏱️  flutter pub get       → 1-2 min
+⏱️  pod install          → 3-5 min (YAVAŞ)
+⏱️  Xcode build (ilk)    → 5-10 min (ÇOK YAVAŞ)
+⏱️  Xcode build (cache)  → 1-2 min
+⏱️  flutter run          → 2-3 min
+
+📊 TOTAL: 15-25 dakika (ilk build)
+
+
+═══ XCODE SETUP (ÖNEMLI) ═══════════════════════════════════════
+
+1. open ios/Runner.xcworkspace  ← .xcodeproj AÇMA!
+2. Sol: Runner project seç
+3. Alt: Runner target seç
+4. Sağ: "Signing & Capabilities" tab
+5. Team dropdown → Apple ID seç ✅
+6. Bundle ID (opsiyonel): com.yourcompany.nomatch
+
+
+═══ INFO.PLIST CHECK ══════════════════════════════════════════
+
+Şunların VAR OLMASI LAZIM:
+✅ NSBluetoothAlwaysUsageDescription
+✅ NSBluetoothPeripheralUsageDescription
+✅ NSMotionUsageDescription
+✅ NSLocalNetworkUsageDescription
+
+Kontrol: open ios/Runner/Info.plist
+
+
+═══ DEBUG MODE ════════════════════════════════════════════════
+
+Verbose logs:
+   flutter run -v
+
+CocoaPods details:
+   pod install --verbose
+
+Xcode details:
+   flutter build ios -v
+
+
+═══ REAL DEVICE BUILD ════════════════════════════════════════
+
+1. iPhone/iPad bağla
+2. Xcode'da: Product > Destination > Device seç
+3. Product > Run (Cmd+R)
+
+
+═══ RELEASE BUILD ═════════════════════════════════════════════
+
+flutter build ios --release
+
+Çıkış: build/ios/iphoneos/Runner.app
+
+
+════════════════════════════════════════════════════════════════
+
+📚 Detaylı guide: MAC_BUILD_GUIDE.md
+✅ Checklist: MAC_CHECKLIST.md
+
+Başarılar! 🚀
+
+════════════════════════════════════════════════════════════════

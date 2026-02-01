@@ -2,10 +2,15 @@
 /// 
 /// Service and characteristic UUIDs for NoMatch P2P over BLE
 class BleConstants {
-  // Service UUID - unique identifier for NoMatch P2P
+  // ✅ NOMATCH CUSTOM UUIDs (must match iOS BLEAdvertisingManager.swift)
+  static const String nomatchServiceUUID = '550e8400-e29b-41d4-a716-446655440000';
+  static const String nomatchCharTxRx = '550e8400-e29b-41d4-a716-446655440001';
+  static const String nomatchCharControl = '550e8400-e29b-41d4-a716-446655440002';
+  
+  // Legacy Service UUID - unique identifier for NoMatch P2P over BLE
   static const String serviceUuid = '0000fff0-0000-1000-8000-00805f9b34fb';
   
-  // Characteristics
+  // Legacy Characteristics
   static const String discoveryCharUuid = '0000fff1-0000-1000-8000-00805f9b34fb';
   static const String messageCharUuid = '0000fff2-0000-1000-8000-00805f9b34fb';
   static const String sensorCharUuid = '0000fff3-0000-1000-8000-00805f9b34fb';

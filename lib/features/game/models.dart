@@ -28,6 +28,9 @@ final class RoundSnapshot {
 
   final GamePhase phase;
   final RoundTerminal? terminal; // only in Result
+  
+  final String? topAsset; // ✅ NEW: Question asset for top
+  final String? bottomAsset; // ✅ NEW: Question asset for bottom
 
   const RoundSnapshot({
     required this.sessionId,
@@ -44,6 +47,8 @@ final class RoundSnapshot {
     required this.peerFinal,
     required this.phase,
     required this.terminal,
+    this.topAsset, // ✅ NEW
+    this.bottomAsset, // ✅ NEW
   });
 }
 

@@ -18,6 +18,7 @@ class SensorSnapshotMessage extends P2pMessage {
   final double headingDeg;
   final int timestampMs;
   final String mid;
+  final String? nativeDeviceId; // ✅ NEW: Native device UUID for leader election
 
   SensorSnapshotMessage({
     this.v = 1,
@@ -26,6 +27,7 @@ class SensorSnapshotMessage extends P2pMessage {
     required this.headingDeg,
     required this.timestampMs,
     String? mid,
+    this.nativeDeviceId,
   }) : mid = mid ?? '';
 
   @override
@@ -42,6 +44,7 @@ class SensorSnapshotMessage extends P2pMessage {
       'isFlat': isFlat,
       'headingDeg': headingDeg,
       'timestampMs': timestampMs,
+      if (nativeDeviceId != null) 'nativeDeviceId': nativeDeviceId,
     };
   }
 
@@ -53,6 +56,7 @@ class SensorSnapshotMessage extends P2pMessage {
       headingDeg: (json['headingDeg'] as num?)?.toDouble() ?? 0.0,
       timestampMs: json['timestampMs'] ?? 0,
       mid: json['mid'] ?? '',
+      nativeDeviceId: json['nativeDeviceId'] as String?,
     );
   }
 }
@@ -285,11 +289,13 @@ class GameStartMessage extends P2pMessage {
   final int v;
   final String sid;
   final int? startAtMs;
+  final int? seed; // ✅ NEW: Shuffle seed for deterministic question order
 
   GameStartMessage({
     this.v = 1,
     required this.sid,
     this.startAtMs,
+    this.seed,
   });
 
   @override
@@ -303,6 +309,7 @@ class GameStartMessage extends P2pMessage {
       't': messageType,
       'ts': DateTime.now().millisecondsSinceEpoch,
       if (startAtMs != null) 'startAtMs': startAtMs,
+      if (seed != null) 'seed': seed, // ✅ NEW
     };
   }
 
@@ -311,6 +318,7 @@ class GameStartMessage extends P2pMessage {
       v: json['v'] ?? 1,
       sid: json['sid'] ?? '',
       startAtMs: json['startAtMs'] as int?,
+      seed: json['seed'] as int?, // ✅ NEW
     );
   }
 }
@@ -344,6 +352,7 @@ class ShareOfferMessage extends P2pMessage {
   final String kind;
   final String value;
   final String offerId;
+  final Map<String, dynamic>? extra; // ✅ NEW: Additional metadata
 
   ShareOfferMessage({
     this.v = 1,
@@ -351,6 +360,7 @@ class ShareOfferMessage extends P2pMessage {
     required this.kind,
     required this.value,
     String? offerId,
+    this.extra,
   }) : offerId = offerId ?? '';
 
   @override
@@ -366,6 +376,7 @@ class ShareOfferMessage extends P2pMessage {
       'offerId': offerId,
       'kind': kind,
       'value': value,
+      if (extra != null) 'extra': extra,
     };
   }
 
@@ -376,6 +387,7 @@ class ShareOfferMessage extends P2pMessage {
       kind: json['kind'] ?? '',
       value: json['value'] ?? '',
       offerId: json['offerId'] ?? '',
+      extra: json['extra'] as Map<String, dynamic>?,
     );
   }
 }

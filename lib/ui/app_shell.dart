@@ -2,71 +2,94 @@ import 'dart:async';
 import 'dart:developer' as dev;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kDebugMode;
 
-import '../app/app_coordinator.dart';
-import '../app/app_phase.dart';
+import '../app/pairing_manager.dart';
+import '../app/app_state.dart';
+import '../app/pairing_logic.dart';
+import '../features/game/lazy_question_provider.dart';
+import '../plugins/p2p_ble/ble_p2p_plugin.dart';
+import '../services/sensor_manager.dart';
 import 'router.dart';
 
 class AppShell extends StatefulWidget {
-  final AppCoordinator coordinator;
+  final PairingManager pairingManager;
+  final BleP2pPlugin blePlugin;
+  final LazyQuestionProvider questions;
 
-  const AppShell({super.key, required this.coordinator});
+  const AppShell({
+    super.key,
+    required this.pairingManager,
+    required this.blePlugin,
+    required this.questions,
+  });
 
   @override
   State<AppShell> createState() => _AppShellState();
 }
 
 class _AppShellState extends State<AppShell> {
-  late AppViewState _view = widget.coordinator.state;
-  StreamSubscription<AppViewState>? _sub;
-  int? _lastPrecachedQid;
-  AppPhase? _lastLoggedPhase;
+  late AppViewState _viewState;
+
+  StreamSubscription? _pairingStateSub;
+  StreamSubscription? _flatSub;
+  late final SensorManager _sensorManager;
 
   @override
   void initState() {
     super.initState();
-    _sub = widget.coordinator.states.listen((s) {
+    // Initialize sensor manager
+    _sensorManager = SensorManager();
+
+    // Initialize with current state from manager
+    _viewState = AppViewState(
+      pairingState: widget.pairingManager.state,
+      isPhoneFlat: _sensorManager.isFlat,
+    );
+
+    // Listen to flat status changes
+    _flatSub = _sensorManager.flatUpdates.listen((isFlat) {
       if (!mounted) return;
-
-      if (_lastLoggedPhase != s.phase) {
-        _lastLoggedPhase = s.phase;
-        dev.log('AppShell: phase_change -> ${s.phase}');
-      }
-
-      if (s.phase == AppPhase.playing && s.currentQuestion != null) {
-        final qid = s.currentQuestion!.qid;
-        if (_lastPrecachedQid != qid) {
-          _lastPrecachedQid = qid;
-          WidgetsBinding.instance.addPostFrameCallback((_) async {
-            try {
-              await precacheImage(AssetImage(s.currentQuestion!.topAsset), context);
-              await precacheImage(AssetImage(s.currentQuestion!.bottomAsset), context);
-            } catch (_) {}
-          });
-        }
-      }
-
-      setState(() => _view = s);
+      setState(() {
+        _viewState = _viewState.copyWith(isPhoneFlat: isFlat);
+      });
     });
-    dev.log('AppShell:init state=${widget.coordinator.state.phase}');
+
+    // Listen to pairing state changes
+    _pairingStateSub = widget.pairingManager.stateUpdates.listen((newState) {
+      if (!mounted) return;
+      setState(() {
+        _viewState = _viewState.copyWith(pairingState: newState);
+      });
+    });
+
+    // Start sensors
+    _startSensors();
+    
+    // NOTE: Pairing is now started by user tapping OK button in PairingScreen
+    // (was previously auto-started here with retry logic)
   }
 
   @override
   void dispose() {
-    _sub?.cancel();
-    _sub = null;
+    _pairingStateSub?.cancel();
+    _flatSub?.cancel();
+    _sensorManager.dispose();
     super.dispose();
+  }
+
+  Future<void> _startSensors() async {
+    print('[SHELL] 📡 Starting sensors...');
+    await _sensorManager.start();
   }
 
   @override
   Widget build(BuildContext context) {
-    dev.log('AppShell: build, phase=${_view.phase}');
-    
-    return AppRouter(
-      coordinator: widget.coordinator,
-      viewState: _view,
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: AppRouter(
+        pairingManager: widget.pairingManager,
+        viewState: _viewState,
+      ),
     );
   }
 }
-

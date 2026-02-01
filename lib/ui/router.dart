@@ -1,76 +1,98 @@
-import 'dart:async';
-import 'dart:math' as math;
-
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'dart:developer' as dev;
-import 'package:wakelock_plus/wakelock_plus.dart';
+import 'dart:math' as math;
 
-import '../app/app_coordinator.dart';
-import '../app/app_phase.dart';
-import '../features/game/game_state.dart';
+import '../app/pairing_manager.dart';
+import '../app/app_state.dart';
+import '../app/pairing_logic.dart';
+import '../features/pairing/flashlight_signal.dart';
 import 'color_palette_manager.dart';
-import 'game_result_screen.dart';
-import 'game_screen.dart';
 import 'pairing_failed_screen.dart';
 import 'pairing_success_screen.dart';
-import 'share_results_screen.dart';
-import 'share_screen.dart';
-import 'share_success_screen.dart';
-import 'terminal_fail_screen.dart';
 import 'splash_screen.dart';
+import '../features/game/game_screen.dart';
+import '../features/game/game_share_screen.dart';
+import '../features/game/game_state.dart'; // ✅ For GamePhase check
 import 'widgets/radar_pairing_view.dart';
 
-// AppRouter widget maps AppPhase -> screen widgets.
-
+/// Router maps PairingState -> screen widgets
 class AppRouter extends StatelessWidget {
-  final AppCoordinator coordinator;
+  final PairingManager pairingManager;
   final AppViewState viewState;
 
   const AppRouter({
     super.key,
-    required this.coordinator,
+    required this.pairingManager,
     required this.viewState,
   });
 
   @override
   Widget build(BuildContext context) {
-    final phase = viewState.phase;
-    dev.log('AppRouter: phase=$phase');
-    
-    if (phase == AppPhase.gameResult) {
-      print("[ROUTER] ===== ROUTING TO GAME RESULT SCREEN =====");
-      print("[ROUTER] Result type: ${viewState.gameResultType}");
-    }
-    
-    return switch (phase) {
-      AppPhase.splash => const SplashScreen(),
-      AppPhase.pairing => viewState.validationFailed
-          ? PairingFailedScreen(coordinator: coordinator)
-          : viewState.pairHandshakeComplete
-              ? PairingSuccessScreen(coordinator: coordinator)
-              : PairingScreen(coordinator: coordinator, state: viewState),
-      AppPhase.playing => GameScreen(state: viewState, coordinator: coordinator),
-      AppPhase.gameResult => GameResultScreen(
-          coordinator: coordinator,
-          resultType: viewState.gameResultType ?? GameResultType.failure,
-        ),
-      AppPhase.share => ShareScreen(state: viewState, coordinator: coordinator),
-      AppPhase.shareResults => ShareResultsScreen(
-          coordinator: coordinator,
-          state: viewState,
-        ),
+    final state = viewState.pairingState;
+    dev.log('AppRouter: pairing_state=$state');
+
+    return switch (state) {
+      PairingState.idle ||
+      PairingState.hostingReady ||
+      PairingState.peerSearching ||
+      PairingState.preConnected ||
+      PairingState.headingValidating =>
+        PairingScreen(pairingManager: pairingManager, state: viewState),
+      PairingState.connected => PairingSuccessScreen(pairingManager: pairingManager),
+      PairingState.game || PairingState.gameReady || PairingState.playing => GameScreen(
+        engine: pairingManager.gameEngine!,
+        onOpenShare: () {
+          // ✅ DEFENSIVE: Check if game is really in terminal state before opening share
+          final phase = pairingManager.gameEngine?.state.phase;
+          print('[ROUTER] 🎮 onOpenShare called - phase=$phase');
+          
+          if (phase != GamePhase.terminalSuccess) {
+            print('[ROUTER] ⚠️ onOpenShare called but phase=$phase (not terminalSuccess), IGNORING');
+            return;
+          }
+          
+          print('[ROUTER] 🎮 Phase is terminalSuccess - pushing GameShareScreen...');
+          try {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) {
+                  print('[ROUTER] 🎮 GameShareScreen builder called');
+                  return GameShareScreen(
+                    engine: pairingManager.gameEngine!,
+                    onReset: () async {
+                      print('[ROUTER] 🎮 Player reset - returning to pairing');
+                      await pairingManager.stop(); // Stop BLE and reset
+                      if (context.mounted) {
+                        print('[ROUTER] 🎮 Popping share screen');
+                        Navigator.of(context).pop(); // Pop share screen
+                      }
+                    },
+                  );
+                },
+              ),
+            );
+            print('[ROUTER] 🎮 Navigator.push completed');
+          } catch (e) {
+            print('[ROUTER] ❌ ERROR in onOpenShare: $e');
+          }
+        },
+        onReset: () async {
+          print('[ROUTER] ❌ terminalFail - resetting to pairing');
+          await pairingManager.stop(); // Stop BLE and reset
+        },
+      ),
+      PairingState.failed => PairingFailedScreen(pairingManager: pairingManager),
     };
   }
 }
 
 class PairingScreen extends StatefulWidget {
-  final AppCoordinator coordinator;
+  final PairingManager pairingManager;
   final AppViewState state;
-  
+
   const PairingScreen({
     super.key,
-    required this.coordinator,
+    required this.pairingManager,
     required this.state,
   });
 
@@ -78,181 +100,197 @@ class PairingScreen extends StatefulWidget {
   State<PairingScreen> createState() => _PairingScreenState();
 }
 
-class _PairingScreenState extends State<PairingScreen> with TickerProviderStateMixin {
-  late final AnimationController _a = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1200),
-  )..repeat(reverse: true);
-  
-  late final AnimationController _morphController = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 800), // Morph süresi
-  );
-  
-  bool _morphStarted = false;
-  final _paletteManager = ColorPaletteManager();
-  Timer? _paletteLongPressTimer;
+// GradientType artık ColorPaletteManager'dan geliyor
+
+class _PairingScreenState extends State<PairingScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulseController;
+  late ColorPalette _selectedPalette = ColorPalette.cosmicConnection;
+  late GradientType _selectedGradient = GradientType.linear;
+  bool _showGradientStep = false; // Track if showing gradient selector
+  bool _torchEnabled = false; // Flashlight state
+  bool _pairingStarted = false; // Track if pairing button was tapped
+  final FlashlightSignal _flashlight = FlashlightSignal();
 
   @override
   void initState() {
     super.initState();
-    
-    // Ekranı açık tut (pairing sırasında)
-    if (!kIsWeb) {
-      WakelockPlus.enable();
-      dev.log('PairingScreen: Wakelock enabled - screen will stay on');
-    }
-    
-    // Kaydedilmiş paleti yükle
-    _paletteManager.loadPalette().then((_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void didUpdateWidget(covariant PairingScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    
-    // Start morph animation when transitioning to game
-    if (!_morphStarted && 
-        oldWidget.state.phase != AppPhase.playing &&
-        widget.state.phase == AppPhase.playing) {
-      _morphStarted = true;
-      _morphController.forward();
-    }
+    dev.log('PairingScreen: initiated');
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+    // NOTE: DO NOT repeat() here - animation only starts on button tap
   }
 
   @override
   void dispose() {
-    // Wakelock'u devre dışı bırak (ekran normal davranışa döner)
-    if (!kIsWeb) {
-      WakelockPlus.disable();
-      dev.log('PairingScreen: Wakelock disabled - screen can sleep now');
-    }
-    
-    _paletteLongPressTimer?.cancel();
-    _a.dispose();
-    _morphController.dispose();
+    _pulseController.dispose();
+    _flashlight.dispose(); // Clean up flashlight
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final state = widget.state;
-    
-    dev.log('PairingScreen: build, phase=${state.phase}');
+    final pairingState = state.pairingState;
+    final paletteManager = ColorPaletteManager();
+
     return Scaffold(
-      body: IgnorePointer(
-        ignoring: false,
-        child: RepaintBoundary(
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: paletteManager.currentGradient,
+        ),
+        child: GestureDetector(
+          onLongPress: () {
+            dev.log('[UI] Long press detected - showing color palette');
+            _showColorPaletteDialog(context);
+          },
           child: Stack(
-            fit: StackFit.expand,
             children: [
-              // Dinamik renk paleti gradient
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: _paletteManager.currentPalette.gradient,
-                ),
-                child: const SizedBox.expand(),
-              ),
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapDown: _startPaletteLongPress,
-                onTapUp: (_) => _cancelPaletteLongPress(),
-                onTapCancel: _cancelPaletteLongPress,
+              // Radar view (transparent - let gradient show through)
+              Positioned.fill(
                 child: RadarPairingView(
-                  peers: widget.coordinator.discoveredPeers,
-                  focusCandidatePeerId: state.focusCandidatePeerId,
-                  readySoon: state.pairingReadySoon,
-                  focusCandidateLocked: state.focusCandidateLocked,
-                  pairHandshakeComplete: state.pairHandshakeComplete,
-                  isConnectingTransition: state.isConnectingTransition,
-                  localHeadingDeg: state.stableHeadingDeg,
-                  validationFailed: state.validationFailed, // ✅ NEW
+                  peers: [], // TODO: Pass from PairingManager
+                  focusCandidatePeerId: null,
+                  readySoon: pairingState == PairingState.hostingReady,
+                  focusCandidateLocked: pairingState == PairingState.preConnected,
+                  pairHandshakeComplete: pairingState == PairingState.connected,
+                  isConnectingTransition:
+                      pairingState == PairingState.preConnected,
+                  localHeadingDeg: state.ourHeading,
+                  validationFailed: pairingState == PairingState.failed,
+                  // 🎨 IMPORTANT: Don't draw background - let parent gradient show through
                 ),
               ),
-              // Yukarı ok veya onay işareti animasyonu
+
+              // Central animated arrow (tap to start/stop pairing)
               Center(
-                child: AnimatedBuilder(
-                  animation: _a,
-                  builder: (context, child) {
-                    final v = _a.value;
-                    final scale = 0.92 + 0.08 * v;
-                    final isGamePhase = state.phase == AppPhase.playing;
-                    final dy = isGamePhase ? 0.0 : -10.0 * (v - 0.5);
-                    // Opacity 0.0-1.0 arasında olmalı
-                    final opacity = (0.6 + 0.3 * v).clamp(0.0, 1.0);
-                    
-                    return Transform.translate(
-                      offset: Offset(0, dy),
-                      child: Transform.scale(
-                        scale: scale,
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      // Ekran boyutunun küçük olanının %40'ı
-                      final screenSize = MediaQuery.of(context).size;
-                      final minDimension = screenSize.width < screenSize.height 
-                          ? screenSize.width 
-                          : screenSize.height;
-                      final iconSize = minDimension * 0.4;
+                child: GestureDetector(
+                  onTap: () async {
+                    if (_pairingStarted) {
+                      // Stop pairing
+                      dev.log('[UI] ⏹️ Stopping pairing');
+                      setState(() {
+                        _pairingStarted = false;
+                      });
                       
-                      return AnimatedBuilder(
-                        animation: _a,
-                        builder: (context, _) {
-                          final v = _a.value;
-                          final opacity = (0.6 + 0.3 * v).clamp(0.0, 1.0);
-                          
-                          // Morph animasyonu için ikinci controller'ı kullan
-                          return AnimatedBuilder(
-                            animation: _morphController,
-                            builder: (context, _) {
-                              final morphProgress = _morphController.value;
-                              
-                              return CustomPaint(
-                                size: Size(iconSize, iconSize),
-                                painter: _PairingMorphPainter(
-                                  color: Colors.white.withOpacity(opacity),
-                                  greenColor: const Color(0xFF00FF88).withOpacity(opacity),
-                                  morphProgress: morphProgress,
-                                ),
-                              );
-                            },
-                          );
-                        },
+                      // Stop animation
+                      _pulseController.stop();
+                      
+                      // Stop BLE pairing
+                      await widget.pairingManager.stop();
+                      
+                      return;
+                    }
+                    
+                    // Start pairing
+                    dev.log('[UI] ▶️ Starting pairing');
+                    setState(() {
+                      _pairingStarted = true;
+                    });
+                    
+                    // Start animation
+                    _pulseController.repeat(reverse: true);
+                    
+                    // Start BLE pairing with retry (wait for phone to be flat)
+                    const maxRetries = 20; // ~10 seconds
+                    int retries = 0;
+                    bool success = false;
+                    
+                    while (retries < maxRetries && !success && _pairingStarted) {
+                      final result = await widget.pairingManager.start(
+                        isPhoneFlat: state.isPhoneFlat,
+                      );
+                      
+                      if (result.success) {
+                        success = true;
+                        break;
+                      }
+                      
+                      retries++;
+                      dev.log('[UI] ⏳ Pairing retry $retries/$maxRetries (isFlat=${state.isPhoneFlat})');
+                      
+                      // Wait before retry (check if still running)
+                      await Future.delayed(const Duration(milliseconds: 500));
+                    }
+                    
+                    if (!success && _pairingStarted) {
+                      dev.log('[UI] ❌ Pairing failed after $maxRetries retries');
+                    }
+                  },
+                  child: AnimatedBuilder(
+                    animation: _pulseController,
+                    builder: (context, _) {
+                      final v = _pulseController.value;
+                      // ✅ BEKLEME: Sabit, hafif soluk
+                      // ✅ ARAMA: Nabız animasyonu + sonar halkaları
+                      final scale = _pairingStarted 
+                        ? (0.95 + (v * 0.1)) // Subtle pulse 0.95x - 1.05x
+                        : 1.0; // Static when waiting
+                      return Transform.scale(
+                        scale: scale,
+                        child: CustomPaint(
+                          painter: _ArrowPainter(
+                            color: const Color(0xFFF5F5F5), // Pearl white
+                            opacity: _pairingStarted ? 1.0 : 0.6, // Dimmed before tap
+                            isSearching: _pairingStarted, // ✅ NEW: Sonar rings
+                            animationValue: v, // ✅ NEW: Animation phase
+                          ),
+                          size: const Size(120, 120),
+                        ),
                       );
                     },
                   ),
                 ),
               ),
+
+
+              // Flashlight toggle (top right) - active during pairing (phone is flat)
               Positioned(
-                top: 44,
-                right: 44,
-                child: IgnorePointer(
-                  ignoring: false,
-                  child: IconButton(
-                    visualDensity: VisualDensity.compact,
-                    iconSize: 32,
-                    splashRadius: 20,
-                    onPressed: state.stableIsFlat
-                        ? () => widget.coordinator.setInviteBeaconEnabled(
-                              !state.inviteBeaconEnabled,
-                            )
-                        : null,
-                    icon: Icon(
-                      state.inviteBeaconEnabled
-                          ? Icons.toggle_on
-                          : Icons.toggle_off,
-                      color: state.stableIsFlat
-                          ? Colors.white.withOpacity(0.9)
-                          : Colors.white.withOpacity(0.35),
+                top: 50,
+                right: 20,
+                child: GestureDetector(
+                  onTap: state.isPhoneFlat
+                    ? () async {
+                    // Only toggle if phone is flat (hosting ready means flat)
+                        setState(() {
+                      _torchEnabled = !_torchEnabled;
+                    });
+                    
+                    // Control torch
+                    if (_torchEnabled) {
+                      await _flashlight.startBlinking();
+                    } else {
+                      await _flashlight.stopBlinking();
+                    }
+                  } : null, // Disabled if phone not flat
+                  child: Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.transparent, // No background color
+                      border: Border.all(
+                        color: const Color(0xFFF5F5F5).withOpacity(
+                          state.isPhoneFlat ? 0.8 : 0.3 // Dimmed if phone not flat
+                        ),
+                        width: 2,
+                      ),
+                    ),
+                    child: Icon(
+                      _torchEnabled ? Icons.toggle_on : Icons.toggle_off,
+                      color: state.isPhoneFlat
+                          ? (_torchEnabled 
+                              ? const Color(0xFFF5F5F5) // Bright pearl white when on
+                              : const Color(0xFFF5F5F5).withOpacity(0.5)) // Pearl white dimmed when off
+                          : const Color(0xFFF5F5F5).withOpacity(0.2), // Very dimmed when phone not flat
+                      size: 28,
                     ),
                   ),
                 ),
               ),
+
             ],
           ),
         ),
@@ -260,404 +298,368 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
     );
   }
 
-  void _startPaletteLongPress(TapDownDetails details) {
-    _paletteLongPressTimer?.cancel();
-    _paletteLongPressTimer = Timer(const Duration(milliseconds: 1500), () {
-      _paletteLongPressTimer = null;
-      if (!mounted) return;
-      _openPaletteSelector();
+  void _showColorPaletteDialog(BuildContext context) {
+    setState(() {
+      _showGradientStep = false; // Show color step first
     });
-  }
 
-  void _cancelPaletteLongPress() {
-    _paletteLongPressTimer?.cancel();
-    _paletteLongPressTimer = null;
-  }
-
-  Future<void> _openPaletteSelector() async {
-    await showModalBottomSheet<void>(
+    showDialog(
       context: context,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withOpacity(0.35),
-      builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 14,
-              runSpacing: 14,
-              children: [
-                for (final palette in ColorPalette.values)
-                  InkWell(
-                    onTap: () async {
-                      await _paletteManager.setPalette(palette);
-                      if (!mounted) return;
-                      setState(() {});
-                      Navigator.of(context).pop();
-                    },
-                    borderRadius: BorderRadius.circular(40),
-                    child: Container(
-                      width: 72,
-                      height: 72,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: palette.gradient,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.2),
-                            blurRadius: 10,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Text(
-                          palette.emoji,
-                          style: const TextStyle(fontSize: 26),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          content: SizedBox(
+            width: double.maxFinite,
+            child: !_showGradientStep
+                ? _buildColorPaletteGrid(context, setState)
+                : _buildGradientTypeGrid(context, setState),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildColorPaletteGrid(BuildContext context, StateSetter setState) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+      ),
+      itemCount: ColorPalette.values.length,
+      itemBuilder: (context, index) {
+        final palette = ColorPalette.values[index];
+        final colors = palette.colors;
+        final isSelected = _selectedPalette == palette;
+
+        return GestureDetector(
+          onTap: () {
+            this.setState(() {
+              _selectedPalette = palette;
+              _showGradientStep = true;
+              dev.log('[UI] Selected palette: ${palette.emoji}');
+              // ✅ ColorPaletteManager'a kaydet
+              ColorPaletteManager().setPalette(palette);
+            });
+            setState(() {}); // Rebuild dialog
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: colors,
+              ),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: Colors.white,
+                width: isSelected ? 4 : 0,
+              ),
+            ),
+            child: Center(
+              child: Text(
+                palette.emoji,
+                style: const TextStyle(fontSize: 28),
+              ),
             ),
           ),
         );
       },
     );
   }
-}
 
-class TerminalSuccessScreen extends StatefulWidget {
-  final AppCoordinator coordinator;
-  const TerminalSuccessScreen({super.key, required this.coordinator});
-
-  @override
-  State<TerminalSuccessScreen> createState() => _TerminalSuccessScreenState();
-}
-
-class _TerminalSuccessScreenState extends State<TerminalSuccessScreen> with SingleTickerProviderStateMixin {
-  late final AnimationController _a = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))
-    ..repeat(reverse: true);
-
-  @override
-  void dispose() {
-    _a.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {},
-      child: AnimatedBuilder(
-        animation: _a,
-        builder: (context, _) {
-          final v = _a.value;
-          return ColoredBox(
-            color: scheme.surface,
-            child: Center(
-              child: Transform.scale(
-                scale: 0.88 + 0.08 * v,
-                child: CustomPaint(
-                  painter: _MarkPainter(color: scheme.onSurface.withOpacity(0.18), variant: 5),
-                  size: const Size.square(260),
+  Widget _buildGradientTypeGrid(BuildContext context, StateSetter setState) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Back button
+        GestureDetector(
+          onTap: () {
+            this.setState(() {
+              _showGradientStep = false;
+            });
+            setState(() {}); // Rebuild dialog
+          },
+          child: Container(
+            width: 50,
+            height: 50,
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey),
+              borderRadius: BorderRadius.circular(8),
+              color: Colors.grey.withOpacity(0.2),
+            ),
+            child: const Center(
+              child: Text('← ', style: TextStyle(fontSize: 24)),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: GradientType.values.map((type) {
+            final isSelected = _selectedGradient == type;
+            return GestureDetector(
+              onTap: () {
+                Navigator.pop(context);
+                this.setState(() {
+                  _selectedGradient = type;
+                  dev.log('[UI] Selected gradient: ${type.name}');
+                  // ✅ ColorPaletteManager'a kaydet ve persist et
+                  ColorPaletteManager().setGradientType(type);
+                  ColorPaletteManager().saveTheme(); // ✅ Kalıcı kaydet
+                });
+              },
+              child: Container(
+                width: 70,
+                height: 70,
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: isSelected ? Colors.white : Colors.grey,
+                    width: isSelected ? 3 : 1,
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                  color: Colors.grey.withOpacity(0.2),
+                ),
+                child: Center(
+                  child: Text(
+                    _getGradientEmoji(type),
+                    style: const TextStyle(fontSize: 32),
+                  ),
                 ),
               ),
-            ),
-          );
-        },
-      ),
+            );
+          }).toList(),
+        ),
+      ],
     );
   }
+
+  Gradient _getGradient(ColorPalette palette) {
+    final colors = palette.colors;
+    return switch (_selectedGradient) {
+      GradientType.linear => LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: colors,
+        stops: const [0.0, 0.3, 0.7, 1.0],
+      ),
+      GradientType.radial => RadialGradient(
+        center: Alignment.center,
+        radius: 1.5,
+        colors: colors,
+        stops: const [0.0, 0.3, 0.7, 1.0],
+      ),
+      GradientType.sweep => SweepGradient(
+        center: Alignment.center,
+        colors: colors,
+        stops: const [0.0, 0.3, 0.7, 1.0],
+        startAngle: 0.0,
+        endAngle: math.pi * 2,
+      ),
+      GradientType.vertical => LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: colors,
+        stops: const [0.0, 0.3, 0.7, 1.0],
+      ),
+      GradientType.horizontal => LinearGradient(
+        begin: Alignment.centerLeft,
+        end: Alignment.centerRight,
+        colors: colors,
+        stops: const [0.0, 0.3, 0.7, 1.0],
+      ),
+      GradientType.corner => LinearGradient(
+        begin: Alignment.bottomRight,
+        end: Alignment.topLeft,
+        colors: colors,
+        stops: const [0.0, 0.3, 0.7, 1.0],
+      ),
+    };
+  }
+
+  String _getGradientName(GradientType type) {
+    return switch (type) {
+      GradientType.linear => '↖️ Diagonal',
+      GradientType.radial => '⭕ Radial',
+      GradientType.sweep => '🌀 Sweep',
+      GradientType.vertical => '⬍ Vertical',
+      GradientType.horizontal => '⬌ Horizontal',
+      GradientType.corner => '↙️ Corner',
+    };
+  }
+
+  String _getGradientEmoji(GradientType type) {
+    return switch (type) {
+      GradientType.linear => '↖️',
+      GradientType.radial => '⭕',
+      GradientType.sweep => '🌀',
+      GradientType.vertical => '⬍',
+      GradientType.horizontal => '⬌',
+      GradientType.corner => '↙️',
+    };
+  }
+
+  String _getStateLabel(PairingState state) {
+    return switch (state) {
+      PairingState.idle => '🔄 Initializing',
+      PairingState.hostingReady => '📡 Ready to Pair',
+      PairingState.peerSearching => '',
+      PairingState.preConnected => '🔗 Validating Heading',
+      PairingState.headingValidating => '🧭 Validating Face-to-Face',
+      PairingState.connected => '✅ Connected',
+      PairingState.game => '🎮 Starting Game',
+      PairingState.failed => '❌ Pairing Failed',
+      PairingState.gameReady => '🎮 Game Ready',
+      PairingState.playing => '🎮 Playing',
+    };
+  }
 }
 
-class _SoftDiscPainter extends CustomPainter {
+class _StarPainter extends CustomPainter {
   final Color color;
-  const _SoftDiscPainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final c = Offset(size.width / 2, size.height / 2);
-    final r = math.min(size.width, size.height) / 2;
-    final p = Paint()..color = color;
-    canvas.drawCircle(c, r * 0.62, p);
-  }
-
-  @override
-  bool shouldRepaint(covariant _SoftDiscPainter oldDelegate) => oldDelegate.color != color;
-}
-
-class _PulseRingPainter extends CustomPainter {
-  final double ring;
-  final Color fg;
-  final Color bg;
-
-  const _PulseRingPainter({required this.ring, required this.fg, required this.bg});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final c = Offset(size.width / 2, size.height / 2);
-    final r = math.min(size.width, size.height) / 2;
-
-    final pBg = Paint()..color = bg;
-    final pFg = Paint()
-      ..color = fg
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 10;
-
-    canvas.drawCircle(c, r * 0.55, pBg);
-    canvas.drawCircle(c, r * (0.25 + 0.55 * ring), pFg);
-  }
-
-  @override
-  bool shouldRepaint(covariant _PulseRingPainter oldDelegate) {
-    return oldDelegate.ring != ring || oldDelegate.fg != fg || oldDelegate.bg != bg;
-  }
-}
-
-class _PairingOkPainter extends CustomPainter {
-  final Color color;
-  const _PairingOkPainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-    final cx = w / 2;
-    final cy = h / 2;
-
-    final ring = Paint()
-      ..color = color.withOpacity(color.opacity * 0.55)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = w * 0.08;
-    canvas.drawCircle(Offset(cx, cy), w * 0.36, ring);
-
-    final stroke = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = w * 0.08
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    final path = Path();
-    path.moveTo(cx - w * 0.18, cy + h * 0.02);
-    path.lineTo(cx - w * 0.02, cy + h * 0.18);
-    path.lineTo(cx + w * 0.20, cy - h * 0.12);
-    canvas.drawPath(path, stroke);
-  }
-
-  @override
-  bool shouldRepaint(covariant _PairingOkPainter oldDelegate) => oldDelegate.color != color;
-}
-
-class _PairingUpArrowPainter extends CustomPainter {
-  final Color color;
-  const _PairingUpArrowPainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-    final cx = w / 2;
-    final cy = h / 2;
-
-    // Dış halka
-    final ring = Paint()
-      ..color = color.withOpacity(color.opacity * 0.4)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = w * 0.06;
-    canvas.drawCircle(Offset(cx, cy), w * 0.38, ring);
-
-    // Yukarı ok (büyütülmüş, halka içinde tam ortalanmış)
-    final stroke = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = w * 0.12
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    final path = Path();
-    // Ok gövdesi (tam ortada, aşağıdan yukarı)
-    path.moveTo(cx, cy + h * 0.18);
-    path.lineTo(cx, cy - h * 0.18);
-    
-    // Sol ok ucu
-    path.moveTo(cx, cy - h * 0.18);
-    path.lineTo(cx - w * 0.18, cy - h * 0.02);
-    
-    // Sağ ok ucu
-    path.moveTo(cx, cy - h * 0.18);
-    path.lineTo(cx + w * 0.18, cy - h * 0.02);
-    
-    canvas.drawPath(path, stroke);
-  }
-
-  @override
-  bool shouldRepaint(covariant _PairingUpArrowPainter oldDelegate) => oldDelegate.color != color;
-}
-
-class _PairingCheckPainter extends CustomPainter {
-  final Color color;
-  const _PairingCheckPainter({required this.color});
+  const _StarPainter({required this.color});
 
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
     final h = size.height;
-    final cx = w / 2;
-    final cy = h / 2;
+    final centerX = w * 0.5;
+    final centerY = h * 0.5;
 
-    // Yeşil dış halka (kalın)
-    final ring = Paint()
+    // ✨ Up arrow with notch
+    final paint = Paint()
       ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = w * 0.08;
-    canvas.drawCircle(Offset(cx, cy), w * 0.38, ring);
+      ..style = PaintingStyle.fill;
 
-    // Onay işareti (checkmark)
-    final stroke = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = w * 0.12
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
+    // Glow effect
+    final glowPaint = Paint()
+      ..color = color.withOpacity(0.2)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, 10)
+      ..style = PaintingStyle.fill;
 
-    final path = Path();
-    // Onay işareti çizimi
-    path.moveTo(cx - w * 0.18, cy);
-    path.lineTo(cx - w * 0.05, cy + h * 0.15);
-    path.lineTo(cx + w * 0.20, cy - h * 0.15);
-    canvas.drawPath(path, stroke);
+    // Three-point star (compass N shape)
+    // Top point (North)
+    final point1 = Offset(centerX, centerY - h * 0.40);
+    // Bottom-right point
+    final point2 = Offset(centerX + w * 0.35, centerY + h * 0.25);
+    // Bottom-left point
+    final point3 = Offset(centerX - w * 0.35, centerY + h * 0.25);
+
+    // Main star path
+    final mainTrianglePath = Path();
+    mainTrianglePath.moveTo(point1.dx, point1.dy); // Top
+    mainTrianglePath.lineTo(point2.dx, point2.dy); // Bottom-right
+    mainTrianglePath.lineTo(point3.dx, point3.dy); // Bottom-left
+    mainTrianglePath.close();
+
+    // Negative triangle cutout in center (pointing up, creating the N shape with gaps)
+    final negativeTrianglePath = Path();
+    negativeTrianglePath.moveTo(centerX - w * 0.18, centerY + h * 0.08); // Left inner point
+    negativeTrianglePath.lineTo(centerX + w * 0.18, centerY + h * 0.08); // Right inner point
+    negativeTrianglePath.lineTo(centerX, centerY - h * 0.15); // Top inner point (pointing up)
+    negativeTrianglePath.close();
+
+    // Combine paths using FillType.evenOdd to create the cutout
+    final combinedPath = Path();
+    combinedPath.fillType = PathFillType.evenOdd;
+    combinedPath.addPath(mainTrianglePath, Offset.zero);
+    combinedPath.addPath(negativeTrianglePath, Offset.zero);
+
+    // Draw glow first
+    canvas.drawPath(mainTrianglePath, glowPaint);
+    
+    // Draw main shape with negative space
+    canvas.drawPath(combinedPath, paint);
   }
 
   @override
-  bool shouldRepaint(covariant _PairingCheckPainter oldDelegate) => oldDelegate.color != color;
+  bool shouldRepaint(covariant _StarPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
 
-class _PairingMorphPainter extends CustomPainter {
+/// Arrow painter with notch at bottom (upward triangle with V-cutout)
+/// Enhanced with sonar rings when searching
+class _ArrowPainter extends CustomPainter {
   final Color color;
-  final Color greenColor;
-  final double morphProgress; // 0.0 = ok, 1.0 = onay
-
-  const _PairingMorphPainter({
+  final double opacity;
+  final bool isSearching; // ✅ NEW: Active search mode
+  final double animationValue; // ✅ NEW: For sonar animation (0.0 - 1.0)
+  
+  const _ArrowPainter({
     required this.color,
-    required this.greenColor,
-    required this.morphProgress,
+    this.opacity = 1.0,
+    this.isSearching = false,
+    this.animationValue = 0.0,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
     final h = size.height;
-    final cx = w / 2;
-    final cy = h / 2;
-    final t = morphProgress.clamp(0.0, 1.0);
+    final centerX = w * 0.5;
+    final centerY = h * 0.5;
+    final center = Offset(centerX, centerY);
 
-    // Renk geçişi: beyaz → yeşil
-    final currentColor = Color.lerp(color, greenColor, t)!;
-
-    // Dış halka
-    final ring = Paint()
-      ..color = currentColor.withOpacity(currentColor.opacity * 0.4)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = w * 0.06 + (w * 0.02 * t); // Kalınlık artar
-    canvas.drawCircle(Offset(cx, cy), w * 0.38, ring);
-
-    // İçerik: Ok'tan onaya morph
-    final stroke = Paint()
-      ..color = currentColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = w * 0.12
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    if (t < 0.5) {
-      // İlk yarı: Ok fade out
-      final fade = 1.0 - (t * 2);
-      final arrowPaint = stroke..color = currentColor.withOpacity(currentColor.opacity * fade);
-      
-      final path = Path();
-      path.moveTo(cx, cy + h * 0.18);
-      path.lineTo(cx, cy - h * 0.18);
-      path.moveTo(cx, cy - h * 0.18);
-      path.lineTo(cx - w * 0.18, cy - h * 0.02);
-      path.moveTo(cx, cy - h * 0.18);
-      path.lineTo(cx + w * 0.18, cy - h * 0.02);
-      canvas.drawPath(path, arrowPaint);
-    } else {
-      // İkinci yarı: Onay fade in
-      final fade = (t - 0.5) * 2;
-      final checkPaint = stroke..color = currentColor.withOpacity(currentColor.opacity * fade);
-      
-      final path = Path();
-      path.moveTo(cx - w * 0.18, cy);
-      path.lineTo(cx - w * 0.05, cy + h * 0.15);
-      path.lineTo(cx + w * 0.20, cy - h * 0.15);
-      canvas.drawPath(path, checkPaint);
+    // ✅ SONAR RINGS (only when searching)
+    if (isSearching) {
+      // 3 sonar rings at different phases
+      for (int i = 0; i < 3; i++) {
+        final phase = (animationValue + (i * 0.33)) % 1.0;
+        final ringRadius = w * 0.3 + (phase * w * 0.5); // Expand outward
+        final ringOpacity = (1.0 - phase) * 0.4; // Fade out as they expand
+        
+        final sonarPaint = Paint()
+          ..color = color.withOpacity(ringOpacity * opacity)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0
+          ..maskFilter = MaskFilter.blur(BlurStyle.normal, 3.0);
+        
+        canvas.drawCircle(center, ringRadius, sonarPaint);
+      }
     }
+
+    // ✅ GLOW (stronger when searching)
+    final glowIntensity = isSearching ? 0.35 : 0.15;
+    final glowRadius = isSearching ? 15.0 : 8.0;
+    final glowPaint = Paint()
+      ..color = color.withOpacity(glowIntensity * opacity)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, glowRadius)
+      ..style = PaintingStyle.fill;
+
+    // Main upward-pointing triangle
+    final arrowPath = Path();
+    arrowPath.moveTo(centerX, centerY - h * 0.35); // Top point
+    arrowPath.lineTo(centerX + w * 0.35, centerY + h * 0.25); // Bottom right
+    arrowPath.lineTo(centerX - w * 0.35, centerY + h * 0.25); // Bottom left
+    arrowPath.close();
+
+    // Notch (inverted triangle cutout at bottom center) - longer/deeper
+    final notchPath = Path();
+    notchPath.moveTo(centerX - w * 0.20, centerY + h * 0.22); // Left base of notch
+    notchPath.lineTo(centerX + w * 0.20, centerY + h * 0.22); // Right base of notch
+    notchPath.lineTo(centerX, centerY + h * 0.35); // Bottom point of notch (deeper)
+    notchPath.close();
+
+    // Combined path with cutout
+    final combinedPath = Path();
+    combinedPath.fillType = PathFillType.evenOdd;
+    combinedPath.addPath(arrowPath, Offset.zero);
+    combinedPath.addPath(notchPath, Offset.zero);
+
+    // Draw glow
+    canvas.drawPath(arrowPath, glowPaint);
+    
+    // ✅ ARROW FILL
+    final paint = Paint()
+      ..color = color.withOpacity(opacity)
+      ..style = PaintingStyle.fill;
+    canvas.drawPath(combinedPath, paint);
   }
 
   @override
-  bool shouldRepaint(covariant _PairingMorphPainter oldDelegate) {
-    return oldDelegate.color != color || 
-           oldDelegate.greenColor != greenColor || 
-           oldDelegate.morphProgress != morphProgress;
-  }
+  bool shouldRepaint(covariant _ArrowPainter oldDelegate) =>
+      oldDelegate.color != color || 
+      oldDelegate.opacity != opacity ||
+      oldDelegate.isSearching != isSearching ||
+      oldDelegate.animationValue != animationValue;
 }
-
-class _MarkPainter extends CustomPainter {
-  final Color color;
-  final int variant;
-  const _MarkPainter({required this.color, required this.variant});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final c = Offset(size.width / 2, size.height / 2);
-    final r = math.min(size.width, size.height) / 2;
-    final p = Paint()..color = color;
-
-    switch (variant) {
-      case 0:
-        canvas.drawCircle(c, r * 0.40, p);
-        return;
-      case 1:
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(Rect.fromCircle(center: c.translate(0, -r * 0.10), radius: r * 0.36), const Radius.circular(28)),
-          p,
-        );
-        return;
-      case 2:
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(Rect.fromCircle(center: c.translate(0, r * 0.10), radius: r * 0.36), const Radius.circular(28)),
-          p,
-        );
-        return;
-      case 3:
-        canvas.drawCircle(c, r * 0.28, p..color = color.withOpacity(color.opacity * 0.65));
-        canvas.drawCircle(c, r * 0.52, p..color = color.withOpacity(color.opacity * 0.25));
-        return;
-      case 4:
-        canvas.drawRect(Rect.fromCenter(center: c, width: r * 0.9, height: r * 0.18), p);
-        return;
-      case 5:
-        canvas.drawCircle(c, r * 0.52, p..style = PaintingStyle.stroke..strokeWidth = 12);
-        return;
-      case 6:
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(Rect.fromCenter(center: c, width: r * 0.9, height: r * 0.5), const Radius.circular(18)),
-          p,
-        );
-        return;
-      default:
-        canvas.drawCircle(c, r * 0.40, p);
-        return;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _MarkPainter oldDelegate) => oldDelegate.color != color || oldDelegate.variant != variant;
-}
-

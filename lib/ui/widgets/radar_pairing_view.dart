@@ -3,7 +3,7 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 
-import '../../features/pairing/pairing_validator.dart';
+import '../../app/pairing_manager.dart' show PeerInfo;
 
 class RadarPairingView extends StatefulWidget {
   final List<PeerInfo> peers;
@@ -116,7 +116,7 @@ class _RadarPairingViewState extends State<RadarPairingView> with TickerProvider
       child: SizedBox.expand(
         child: Stack(
           children: [
-            // Main radar view
+            // Main radar view (TRANSPARENT background)
             SizedBox.expand(
               child: CustomPaint(
                 painter: _RadarPainter(
@@ -127,8 +127,9 @@ class _RadarPairingViewState extends State<RadarPairingView> with TickerProvider
                   focusCandidateLocked: widget.focusCandidateLocked,
                   pairHandshakeComplete: widget.pairHandshakeComplete,
                   localHeadingDeg: widget.localHeadingDeg,
-                  validationFailed: widget.validationFailed, // ✅ NEW
-                  isConnectingTransition: widget.isConnectingTransition, // ✅ NEW: Fade arrow during transition
+                  validationFailed: widget.validationFailed,
+                  isConnectingTransition: widget.isConnectingTransition,
+                  drawBackground: false, // ✅ IMPORTANT: Don't draw background
                 ),
               ),
             ),
@@ -160,6 +161,7 @@ class _RadarPainter extends CustomPainter {
   final double? localHeadingDeg; // Local device heading for radar rotation
   final bool validationFailed; // ✅ NEW: Visual feedback for validation fail
   final bool isConnectingTransition; // ✅ NEW: Fade heading arrow during transition
+  final bool drawBackground; // ✅ NEW: Control background drawing
 
   _RadarPainter({
     required this.tracks,
@@ -171,6 +173,7 @@ class _RadarPainter extends CustomPainter {
     this.localHeadingDeg,
     this.validationFailed = false, // ✅ NEW
     this.isConnectingTransition = false, // ✅ NEW
+    this.drawBackground = false, // ✅ CHANGED: Default false - let parent gradient show through
   }) : super(repaint: repaint);
 
   @override
@@ -178,6 +181,13 @@ class _RadarPainter extends CustomPainter {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final center = Offset(size.width / 2, size.height / 2);
     final radius = math.min(size.width, size.height) * 0.42;
+
+    // ✅ IMPORTANT: Only draw background if enabled (allows parent gradient to show through)
+    if (drawBackground) {
+      final bgPaint = Paint()..color = const Color(0xFF0F172A);
+      canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bgPaint);
+    }
+    // If drawBackground is false, don't draw anything - let parent gradient show through
 
     _drawRadarBase(canvas, center, radius);
 
@@ -350,27 +360,7 @@ class _RadarPainter extends CustomPainter {
     
     canvas.restore();
     
-    // Cardinal directions (N, E, S, W) - çok çok hafif
-    final directionPaint = Paint()
-      ..color = Colors.white.withOpacity(0.12)
-      ..style = PaintingStyle.fill;
-    
-    final textPainter = TextPainter(textDirection: TextDirection.ltr);
-    
-    // ✅ ENHANCED: Heading arrow fades during connection transition
-    final arrowOpacity = isConnectingTransition ? 0.0 : 1.0;
-    
-    // N
-    textPainter.text = TextSpan(
-      text: '↑',
-      style: TextStyle(
-        color: Colors.white.withOpacity(arrowOpacity * 0.8),
-        fontSize: 10,
-        fontWeight: FontWeight.w300,
-      ),
-    );
-    textPainter.layout();
-    textPainter.paint(canvas, center + Offset(-5, -radius - 15));
+    // ✅ REMOVED: Small north arrow outside radar ring
   }
 
   void _drawPattern(Canvas canvas, Offset center, double radius, int variant, Color color) {
@@ -611,7 +601,7 @@ class _PeerTrack {
   void update({required PeerInfo peer, required int nowMs}) {
     lastSeenMs = nowMs;
     headingDeg = peer.heading;
-    stats.push(peer.rssi);
+    stats.push(peer.rssi.toDouble());
   }
 
   double fadeFor(int nowMs) {

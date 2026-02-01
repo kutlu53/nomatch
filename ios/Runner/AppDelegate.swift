@@ -41,7 +41,19 @@ import CoreMotion
       binaryMessenger: controller.binaryMessenger
     )
     
+    // ✅ NEW: Setup compass channel (real heading from magnetometer)
+    let compassChannel = FlutterMethodChannel(
+      name: "com.nomatch/compass",
+      binaryMessenger: controller.binaryMessenger
+    )
+    
     bleAdvertisingManager = BLEAdvertisingManager()
+    
+    // ✅ Setup BLE peripheral write reception channel
+    let blePeripheralChannel = FlutterMethodChannel(
+      name: "com.nomatch/ble_peripheral_writes",
+      binaryMessenger: controller.binaryMessenger
+    )
     
     // ✅ NEW: Initialize orientation vector manager
     orientationVectorManager = OrientationVectorManager()
@@ -113,43 +125,183 @@ import CoreMotion
       }
     }
     
-    bleChannel.setMethodCallHandler { [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) in
+    // ✅ NEW: Compass handler (real heading from magnetometer)
+    compassChannel.setMethodCallHandler { [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) in
       switch call.method {
-      case "startAdvertising":
-        let args = call.arguments as? [String: Any]
-        let serviceUuid = args?["serviceUuid"] as? String ?? "A8B4D2E1-C0B9-4B5D-A2C1-E8D4F2B6C9A1"
-        let deviceName = args?["deviceName"] as? String ?? "NomatchDevice"
+      case "startCompass":
+        print("[COMPASS-iOS] 🧭 Starting real compass...")
+        self?.startCompass(compassChannel)
+        result(nil)
         
-        self?.bleAdvertisingManager?.startAdvertising(
-          serviceUuid: serviceUuid,
-          deviceName: deviceName
-        ) { error in
-          if let error = error {
-            print("[BLE-iOS] Error starting advertising: \(error)")
-            result(FlutterError(code: "ADV_ERROR", message: error.localizedDescription, details: nil))
-          } else {
-            print("[BLE-iOS] ✅ BLE advertising started")
-            result(nil)
-          }
-        }
-        
-      case "stopAdvertising":
-        self?.bleAdvertisingManager?.stopAdvertising { error in
-          if let error = error {
-            print("[BLE-iOS] Error stopping advertising: \(error)")
-            result(FlutterError(code: "ADV_ERROR", message: error.localizedDescription, details: nil))
-          } else {
-            print("[BLE-iOS] ✅ BLE advertising stopped")
-            result(nil)
-          }
-        }
+      case "stopCompass":
+        print("[COMPASS-iOS] 🛑 Stopping compass")
+        self?.stopCompass()
+        result(nil)
         
       default:
         result(FlutterMethodNotImplemented)
       }
     }
     
+    bleChannel.setMethodCallHandler { [weak self] (call: FlutterMethodCall, result: @escaping FlutterResult) in
+      print("[BLE-iOS] 📞 Method channel call received")
+      print("[BLE-iOS]   └─ Method: \(call.method)")
+      print("[BLE-iOS]   └─ Arguments: \(call.arguments ?? [:])")
+      print("[BLE-iOS]   └─ Time: \(Date())")
+      
+      switch call.method {
+      case "startAdvertising":
+        // Use Nomatch-specific UUIDs (must match Dart side)
+        let nomatchServiceUuid = "550e8400-e29b-41d4-a716-446655440000"
+        let args = call.arguments as? [String: Any]
+        let deviceName = args?["deviceName"] as? String ?? "nomatch-device"
+        
+        print("[BLE-iOS] 🚀 startAdvertising method called")
+        print("[BLE-iOS]   └─ Service UUID: \(nomatchServiceUuid) (Nomatch)")
+        print("[BLE-iOS]   └─ Device Name: \(deviceName)")
+        
+        // Set up callback to forward writes from central to Dart (only set once)
+        if self?.bleAdvertisingManager?.onCharacteristicWrite == nil {
+          print("[BLE-iOS] 🔧 Setting up write callback for the first time")
+          self?.bleAdvertisingManager?.onCharacteristicWrite = { [weak self] data in
+            print("[BLE-iOS] ✍️ WRITE RECEIVED from central: \(data.count) bytes")
+            print("[BLE-iOS]   └─ First 50 bytes: \(Array(data.prefix(50)))")
+            // Convert Data to [UInt8] for Dart
+            let bytes = [UInt8](data)
+            print("[BLE-iOS]   └─ Sending to Dart via blePeripheralChannel...")
+            // Send the data back to Dart via peripheral channel on MAIN THREAD
+            DispatchQueue.main.async {
+              print("[BLE-iOS]   └─ Invoking blePeripheralChannel.invokeMethod with \(bytes.count) bytes")
+              blePeripheralChannel.invokeMethod("onWrite", arguments: bytes)
+            }
+          }
+        } else {
+          print("[BLE-iOS] ℹ️ Write callback already set, reusing existing callback")
+        }
+        
+        self?.bleAdvertisingManager?.startAdvertising(
+          serviceUuid: nomatchServiceUuid,
+          deviceName: deviceName
+        ) { error in
+          if let error = error {
+            print("[BLE-iOS] ❌ startAdvertising failed!")
+            print("[BLE-iOS]   └─ Error code: ADV_ERROR")
+            print("[BLE-iOS]   └─ Error message: \(error.localizedDescription)")
+            result(FlutterError(code: "ADV_ERROR", message: error.localizedDescription, details: nil))
+          } else {
+            print("[BLE-iOS] ✅ startAdvertising completed successfully!")
+            print("[BLE-iOS]   └─ BLE advertising is now ACTIVE with Nomatch service UUID")
+            result(nil)
+          }
+        }
+        
+      case "stopAdvertising":
+        print("[BLE-iOS] 🛑 stopAdvertising method called")
+        
+        self?.bleAdvertisingManager?.stopAdvertising { error in
+          if let error = error {
+            print("[BLE-iOS] ❌ stopAdvertising failed!")
+            print("[BLE-iOS]   └─ Error: \(error.localizedDescription)")
+            result(FlutterError(code: "ADV_ERROR", message: error.localizedDescription, details: nil))
+          } else {
+            print("[BLE-iOS] ✅ stopAdvertising completed")
+            print("[BLE-iOS]   └─ BLE advertising is now INACTIVE")
+            result(nil)
+          }
+        }
+        
+      case "getDeviceId":
+        // Return unique device UUID
+        let deviceUUID = UIDevice.current.identifierForVendor?.uuidString ?? "unknown-device"
+        print("[BLE-iOS] 📱 Device UUID: \(deviceUUID)")
+        result(deviceUUID)
+        
+      default:
+        print("[BLE-iOS] ❌ Unknown method: \(call.method)")
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+  
+  // ✅ Sensor Fusion compass using CMDeviceMotion.attitude
+  // Combines: Accelerometer + Gyroscope + Magnetometer
+  private var headingBuffer: [Double] = []
+  private let headingBufferSize = 5
+  
+  private func startCompass(_ channel: FlutterMethodChannel) {
+    print("[FUSION-iOS] 🧭 Starting Sensor Fusion (CMDeviceMotion.attitude)")
+    
+    // Use xMagneticNorthZVertical for absolute heading reference
+    // ⚠️ 200ms interval (5 Hz) - faster rates overload BLE and cause disconnection
+    motionManager.deviceMotionUpdateInterval = 0.2
+    motionManager.startDeviceMotionUpdates(using: .xMagneticNorthZVertical)
+    
+    let timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+      guard let self = self,
+            let motion = self.motionManager.deviceMotion else { return }
+      
+      // Get heading from fused device motion (0-360°)
+      // attitude.yaw is the azimuth angle in radians
+      var heading = motion.attitude.yaw * 180 / .pi
+      if heading < 0 {
+        heading += 360
+      }
+      
+      // Apply circular smoothing
+      let smoothedHeading = self.smoothHeading(heading)
+      
+      // Send to Flutter
+      channel.invokeMethod("heading", arguments: smoothedHeading)
+    }
+    
+    // Store timer to prevent deallocation
+    objc_setAssociatedObject(self, "compassTimer", timer, .OBJC_ASSOCIATION_RETAIN)
+    print("[FUSION-iOS] ✅ Sensor Fusion started")
+  }
+  
+  /// Smooth heading using circular mean (handles 0/360 wraparound)
+  private func smoothHeading(_ newHeading: Double) -> Double {
+    headingBuffer.append(newHeading)
+    if headingBuffer.count > headingBufferSize {
+      headingBuffer.removeFirst()
+    }
+    
+    if headingBuffer.count < 2 {
+      return newHeading
+    }
+    
+    // Circular mean
+    var sinSum = 0.0
+    var cosSum = 0.0
+    
+    for h in headingBuffer {
+      let rad = h * .pi / 180
+      sinSum += sin(rad)
+      cosSum += cos(rad)
+    }
+    
+    var meanRad = atan2(sinSum, cosSum)
+    var meanDeg = meanRad * 180 / .pi
+    if meanDeg < 0 {
+      meanDeg += 360
+    }
+    
+    return meanDeg
+  }
+  
+  private func stopCompass() {
+    motionManager.stopDeviceMotionUpdates()
+    headingBuffer.removeAll()
+    
+    // Stop timer
+    if let timer = objc_getAssociatedObject(self, "compassTimer") as? Timer {
+      timer.invalidate()
+      objc_setAssociatedObject(self, "compassTimer", nil, .OBJC_ASSOCIATION_RETAIN)
+    }
+    
+    print("[FUSION-iOS] ✅ Sensor Fusion stopped")
   }
   
   // ✅ Helper: Convert accuracy rawValue to human-readable label

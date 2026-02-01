@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
-import '../app/app_coordinator.dart';
+import '../app/pairing_manager.dart';
 
 /// Eşleşme başarısızlık ekranı - tragic animasyon
 class PairingFailedScreen extends StatefulWidget {
-  final AppCoordinator coordinator;
+  final PairingManager pairingManager;
 
   const PairingFailedScreen({
     super.key,
-    required this.coordinator,
+    required this.pairingManager,
   });
 
   @override
@@ -39,10 +39,7 @@ class _PairingFailedScreenState extends State<PairingFailedScreen>
     // Pairing ekranına geri dön 4 saniye sonra
     Future.delayed(const Duration(milliseconds: 4000), () {
       if (mounted) {
-        widget.coordinator.dispose().then((_) {
-          // Restart pairing
-          widget.coordinator.initialize();
-        });
+        // TODO: Restart pairing
       }
     });
   }
