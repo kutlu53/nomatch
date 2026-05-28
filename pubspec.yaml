@@ -1,7 +1,7 @@
 name: nomatch
-description: NoMatch - offline-first P2P split-screen game (no text/icons/sound).
+description: Tap!Match - offline-first P2P split-screen game (no text/icons/sound).
 publish_to: "none"
-version: 1.0.0+1
+version: 1.0.2+1
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -18,21 +18,30 @@ dependencies:
   wakelock_plus: ^1.2.0  # Ekranı açık tutmak için
   flutter_svg: ^2.0.0  # ✅ SVG logolar için
   flutter_blue_plus: ^1.32.12  # ✅ BLE cross-platform (iOS + Android)
+  url_launcher: ^6.2.5  # ✅ WhatsApp ve Instagram linklerini açmak için
+  flutter_native_splash: ^2.3.0  # ✅ Native splash screen (runtime için de)
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
-  flutter_native_splash: ^2.3.0  # ✅ Native splash screen
+  flutter_launcher_icons: ^0.13.1
+
+# ✅ App icon configuration
+flutter_launcher_icons:
+  ios: true
+  android: false
+  image_path: "assets/branding/icon.png"  # 1024x1024 PNG
+  remove_alpha_ios: true  # iOS alfa desteklemez
+  background_color_ios: "#191423"  # Ink Plum — şeffaf alanları bu renkle doldurur
 
 # ✅ Native splash screen configuration
 flutter_native_splash:
-  image: assets/branding/logo_full_screen.png
-  color: "#1a1a2e"  # Fallback background (koyu lacivert)
+  image: assets/branding/logo.png   # Merkez logo (şeffaf PNG)
+  color: "#191423"                   # Ink Plum arka plan
+  ios: true
+  android: false
   fullscreen: true
-  android_12:
-    image: assets/branding/logo_full_screen.png
-    color: "#1a1a2e"
 
 flutter:
   uses-material-design: true

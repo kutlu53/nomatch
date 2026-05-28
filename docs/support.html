@@ -1,278 +1,426 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="tr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nomatch - Support</title>
+    <title>Tap!Match – Destek / Support</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #191423 0%, #1e1630 50%, #12102b 100%);
             min-height: 100vh;
             color: #ffffff;
-            line-height: 1.6;
+            line-height: 1.7;
         }
-        
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 40px 20px;
-        }
-        
-        header {
-            text-align: center;
-            margin-bottom: 40px;
-        }
-        
+
+        .container { max-width: 780px; margin: 0 auto; padding: 40px 20px; }
+
+        header { text-align: center; margin-bottom: 36px; }
+
         h1 {
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-            background: linear-gradient(90deg, #00d4ff, #7c3aed);
+            font-size: 2.4rem;
+            margin-bottom: 8px;
+            background: linear-gradient(90deg, #a78bfa, #c4b5fd);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
-        
-        .subtitle {
-            color: rgba(255, 255, 255, 0.6);
-            font-size: 1rem;
+
+        .subtitle { color: rgba(255,255,255,0.5); font-size: 0.95rem; }
+
+        .lang-toggle {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            margin-bottom: 32px;
         }
-        
+
+        .lang-btn {
+            padding: 8px 22px;
+            border-radius: 20px;
+            border: 1px solid rgba(167,139,250,0.35);
+            background: transparent;
+            color: rgba(255,255,255,0.55);
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .lang-btn.active {
+            background: rgba(167,139,250,0.2);
+            border-color: #a78bfa;
+            color: #fff;
+        }
+
+        .nav {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-bottom: 28px;
+        }
+
+        .nav a {
+            padding: 9px 20px;
+            background: rgba(255,255,255,0.07);
+            border-radius: 8px;
+            color: rgba(255,255,255,0.65);
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: background 0.2s;
+        }
+
+        .nav a:hover { background: rgba(255,255,255,0.13); }
+        .nav a.active { background: rgba(167,139,250,0.2); color: #fff; }
+
         .card {
-            background: rgba(255, 255, 255, 0.05);
+            background: rgba(255,255,255,0.04);
             border-radius: 16px;
-            padding: 30px;
-            margin-bottom: 20px;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 28px;
+            margin-bottom: 18px;
+            border: 1px solid rgba(255,255,255,0.08);
         }
-        
+
         h2 {
-            font-size: 1.5rem;
-            margin-bottom: 15px;
-            color: #00d4ff;
+            font-size: 1.25rem;
+            margin-bottom: 18px;
+            color: #c4b5fd;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
-        
-        h3 {
-            font-size: 1.1rem;
-            margin: 20px 0 10px;
-            color: #7c3aed;
+
+        h3 { font-size: 1rem; margin: 18px 0 8px; color: #a78bfa; }
+
+        p { margin-bottom: 12px; color: rgba(255,255,255,0.82); }
+
+        ol, ul { margin-left: 22px; margin-bottom: 12px; }
+
+        li { margin-bottom: 8px; color: rgba(255,255,255,0.82); }
+
+        .step-list { list-style: none; margin-left: 0; counter-reset: steps; }
+
+        .step-list li {
+            counter-increment: steps;
+            padding: 10px 14px 10px 46px;
+            position: relative;
+            border-left: 2px solid rgba(167,139,250,0.25);
+            margin-bottom: 10px;
         }
-        
-        p {
-            margin-bottom: 15px;
-            color: rgba(255, 255, 255, 0.85);
+
+        .step-list li::before {
+            content: counter(steps);
+            position: absolute;
+            left: 12px;
+            top: 10px;
+            width: 22px;
+            height: 22px;
+            background: rgba(167,139,250,0.25);
+            border-radius: 50%;
+            text-align: center;
+            line-height: 22px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: #c4b5fd;
         }
-        
-        ul {
-            margin-left: 20px;
-            margin-bottom: 15px;
+
+        .faq-item {
+            padding-bottom: 18px;
+            margin-bottom: 18px;
+            border-bottom: 1px solid rgba(255,255,255,0.07);
         }
-        
-        li {
-            margin-bottom: 8px;
-            color: rgba(255, 255, 255, 0.85);
-        }
-        
+
+        .faq-item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+
+        .faq-q { font-weight: 600; color: #fff; margin-bottom: 6px; }
+        .faq-a { color: rgba(255,255,255,0.7); margin-bottom: 0; }
+
         .highlight {
-            background: rgba(0, 212, 255, 0.1);
-            border-left: 3px solid #00d4ff;
-            padding: 15px;
+            background: rgba(167,139,250,0.08);
+            border-left: 3px solid #a78bfa;
+            padding: 13px 16px;
             border-radius: 0 8px 8px 0;
-            margin: 15px 0;
+            margin: 14px 0;
+            color: rgba(255,255,255,0.8);
+            font-size: 0.95rem;
         }
-        
-        .emoji {
-            font-size: 1.5rem;
-            margin-right: 10px;
+
+        .contact-box {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 18px;
+            background: rgba(167,139,250,0.09);
+            border-radius: 12px;
+            margin-top: 16px;
         }
-        
+
+        .contact-box .icon { font-size: 2rem; }
+        .contact-info strong { display: block; margin-bottom: 4px; color: #fff; }
+
+        a { color: #a78bfa; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
         footer {
             text-align: center;
             margin-top: 40px;
             padding-top: 20px;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
-            color: rgba(255, 255, 255, 0.5);
+            border-top: 1px solid rgba(255,255,255,0.08);
+            color: rgba(255,255,255,0.35);
+            font-size: 0.85rem;
         }
-        
-        a {
-            color: #00d4ff;
-            text-decoration: none;
-        }
-        
-        a:hover {
-            text-decoration: underline;
-        }
-        
-        .nav {
-            display: flex;
-            gap: 20px;
-            justify-content: center;
-            margin-bottom: 30px;
-        }
-        
-        .nav a {
-            padding: 10px 20px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 8px;
-            transition: background 0.3s;
-        }
-        
-        .nav a:hover {
-            background: rgba(255, 255, 255, 0.2);
-            text-decoration: none;
-        }
-        
-        .nav a.active {
-            background: rgba(0, 212, 255, 0.2);
-        }
-        
-        .faq-item {
-            margin-bottom: 20px;
-            padding-bottom: 20px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .faq-item:last-child {
-            border-bottom: none;
-            margin-bottom: 0;
-            padding-bottom: 0;
-        }
-        
-        .faq-question {
-            font-weight: 600;
-            color: #ffffff;
-            margin-bottom: 10px;
-        }
-        
-        .faq-answer {
-            color: rgba(255, 255, 255, 0.7);
-        }
-        
-        .contact-box {
-            display: flex;
-            align-items: center;
-            padding: 20px;
-            background: rgba(0, 212, 255, 0.1);
-            border-radius: 12px;
-            margin-top: 20px;
-        }
-        
-        .contact-box .emoji {
-            font-size: 2rem;
-        }
-        
-        .contact-info {
-            margin-left: 15px;
-        }
-        
-        .contact-info strong {
-            display: block;
-            margin-bottom: 5px;
-        }
+
+        [lang-content] { display: none; }
+        [lang-content].visible { display: block; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Nomatch</h1>
-            <p class="subtitle">Support & Help</p>
-        </header>
-        
-        <nav class="nav">
-            <a href="index.html">Privacy Policy</a>
-            <a href="support.html" class="active">Support</a>
-        </nav>
-        
+<div class="container">
+
+    <header>
+        <h1>Tap!Match</h1>
+        <p class="subtitle" id="subtitle-tr">Destek</p>
+        <p class="subtitle" id="subtitle-en" style="display:none">Support</p>
+    </header>
+
+    <div class="lang-toggle">
+        <button class="lang-btn active" onclick="setLang('tr')">Türkçe</button>
+        <button class="lang-btn" onclick="setLang('en')">English</button>
+    </div>
+
+    <nav class="nav">
+        <a href="index.html" id="nav-privacy">Gizlilik Politikası</a>
+        <a href="support.html" class="active" id="nav-support">Destek</a>
+    </nav>
+
+    <!-- ===================== TÜRKÇE ===================== -->
+    <div id="content-tr">
+
         <div class="card">
-            <h2><span class="emoji">📖</span>How to Play</h2>
-            <ol style="margin-left: 20px; color: rgba(255, 255, 255, 0.85);">
-                <li style="margin-bottom: 10px;">Place two phones <strong>flat on a table</strong>, facing each other</li>
-                <li style="margin-bottom: 10px;">Tap the arrow on both phones to start pairing</li>
-                <li style="margin-bottom: 10px;">Wait for the Bluetooth connection (phones will show a success animation)</li>
-                <li style="margin-bottom: 10px;">Each round, you'll see two images - tap your favorite</li>
-                <li style="margin-bottom: 10px;">After 5 rounds, see your compatibility and optionally share contact info</li>
+            <h2>🎮 Nasıl Oynanır</h2>
+
+            <h3>Radar Modu (varsayılan)</h3>
+            <ol class="step-list">
+                <li>İki telefonu düz bir masaya, <strong>üst kısımları birbirine dönük</strong> olacak şekilde koyun.</li>
+                <li>Her iki telefonda da ortadaki <strong>üçgen düğmeye</strong> dokunun.</li>
+                <li>Telefonlar Bluetooth ile otomatik olarak eşleşir.</li>
+                <li>Her turda karşınıza iki görsel gelir; birini seçin.</li>
+                <li>5 benzerlik → zafer, 5 farklılık → yenilgi.</li>
+            </ol>
+
+            <h3>Toplu Taşıma Modu (metro, otobüs)</h3>
+            <ol class="step-list">
+                <li>Ana ekranda <strong>sola kaydırın</strong> — toplu taşıma moduna geçersiniz.</li>
+                <li>Yakınızdaki açık Tap!Match telefonları ekranda <strong>nokta olarak</strong> belirir.</li>
+                <li>Eşleşmek istediğiniz noktaya dokunun.</li>
+                <li>Karşı taraf kabul ederse oyun başlar.</li>
             </ol>
         </div>
-        
+
         <div class="card">
-            <h2><span class="emoji">❓</span>Frequently Asked Questions</h2>
-            
+            <h2>❓ Sık Sorulan Sorular</h2>
+
             <div class="faq-item">
-                <p class="faq-question">Why won't the phones connect?</p>
-                <p class="faq-answer">Make sure both phones have Bluetooth enabled and are placed flat on a table, facing each other. The phones need to be within 1-2 meters of each other.</p>
+                <p class="faq-q">Telefonlar neden eşleşmiyor?</p>
+                <p class="faq-a">Bluetooth'un her iki telefonda da açık olduğundan emin olun. Radar modunda telefonların üst kısımları birbirine bakmalı ve aralarındaki mesafe 1–2 metre olmalıdır. Düz ve metal olmayan bir yüzey kullanın.</p>
             </div>
-            
+
             <div class="faq-item">
-                <p class="faq-question">Do I need an internet connection?</p>
-                <p class="faq-answer">No! Nomatch works completely offline. The phones communicate directly via Bluetooth.</p>
+                <p class="faq-q">İnternet bağlantısı gerekiyor mu?</p>
+                <p class="faq-a">Hayır. Tap!Match tamamen çevrimdışı çalışır; tüm iletişim doğrudan Bluetooth üzerinden gerçekleşir.</p>
             </div>
-            
+
             <div class="faq-item">
-                <p class="faq-question">Why do the phones need to face each other?</p>
-                <p class="faq-answer">This is part of the game experience! The app uses motion sensors to verify that both players are sitting face-to-face, creating a more personal connection.</p>
+                <p class="faq-q">Neden telefonların üst kısmı birbirine bakmalı?</p>
+                <p class="faq-a">Uygulama, hareket sensörleriyle iki oyuncunun birbirine karşı oturduğunu doğrular. Bu, oyunun özgün deneyiminin parçasıdır.</p>
             </div>
-            
+
             <div class="faq-item">
-                <p class="faq-question">Does the app collect my data?</p>
-                <p class="faq-answer">No. Nomatch is privacy-first. We don't collect any personal data, and there are no accounts required. See our <a href="index.html">Privacy Policy</a> for details.</p>
+                <p class="faq-q">Toplu taşıma modunda noktalar görünmüyor?</p>
+                <p class="faq-a">Karşı tarafın da Tap!Match uygulaması açık ve toplu taşıma modunda olması gerekir. Bluetooth izninin verildiğinden emin olun.</p>
             </div>
-            
+
             <div class="faq-item">
-                <p class="faq-question">Can I play with Android and iPhone?</p>
-                <p class="faq-answer">Yes! Nomatch supports cross-platform play between iOS and Android devices.</p>
+                <p class="faq-q">Verilerim toplanıyor mu?</p>
+                <p class="faq-a">Hayır. Tap!Match herhangi bir kişisel veri toplamaz, hesap oluşturmanızı gerektirmez. Ayrıntılar için <a href="index.html">Gizlilik Politikası</a>'na bakın.</p>
             </div>
-            
+
             <div class="faq-item">
-                <p class="faq-question">How do I change the color theme?</p>
-                <p class="faq-answer">On the pairing screen, tap the palette icon in the bottom corner to choose from different color themes.</p>
+                <p class="faq-q">Android ile oynayabilir miyim?</p>
+                <p class="faq-a">Şu an için Tap!Match yalnızca iOS'ta kullanılabilmektedir.</p>
             </div>
         </div>
-        
+
         <div class="card">
-            <h2><span class="emoji">🔧</span>Troubleshooting</h2>
-            
-            <h3>Pairing Issues</h3>
+            <h2>🔧 Sorun Giderme</h2>
+
+            <h3>Eşleşme Sorunları</h3>
             <ul>
-                <li>Ensure Bluetooth is enabled on both devices</li>
-                <li>Place phones flat on a stable surface</li>
-                <li>Keep phones within 1-2 meters</li>
-                <li>Try restarting the app on both devices</li>
+                <li>Her iki telefonda da Bluetooth açık olmalı.</li>
+                <li>Telefonları düz, metal olmayan bir yüzeye koyun.</li>
+                <li>Üst kısımlar birbirine dönük olmalı, mesafe 1–2 metre.</li>
+                <li>Uygulamayı kapatıp tekrar açmayı deneyin.</li>
+                <li>Düşük güç modunda bağlantı kararsız olabilir; kapatın.</li>
             </ul>
-            
-            <h3>Connection Drops</h3>
+
+            <h3>Bağlantı Kopmaları</h3>
             <ul>
-                <li>Avoid moving the phones during gameplay</li>
-                <li>Keep phones away from other Bluetooth devices</li>
-                <li>Ensure phones are not in low power mode</li>
+                <li>Oyun sırasında telefonları hareket ettirmeyin.</li>
+                <li>Diğer Bluetooth cihazlarından uzak tutun.</li>
+                <li>Ekranın kilitlenmemesi için uygulamayı ön planda tutun.</li>
             </ul>
+
+            <div class="highlight">
+                Sorun devam ediyorsa her iki telefondaki uygulamayı tamamen kapatıp yeniden açın, ardından tekrar eşleşmeyi deneyin.
+            </div>
         </div>
-        
+
         <div class="card">
-            <h2><span class="emoji">📧</span>Contact Us</h2>
-            <p>Still having issues? We're here to help!</p>
-            
+            <h2>📧 İletişim</h2>
+            <p>Sorununuz çözülmediyse bize yazın.</p>
             <div class="contact-box">
-                <span class="emoji">✉️</span>
+                <span class="icon">✉️</span>
                 <div class="contact-info">
-                    <strong>Email Support</strong>
-                    <a href="mailto:mehmet.kutlu.dio@gmail.com">mehmet.kutlu.dio@gmail.com</a>
+                    <strong>E-posta Desteği</strong>
+                    <a href="mailto:omurgurel@gmail.com">omurgurel@gmail.com</a>
                 </div>
             </div>
-            
-            <p style="margin-top: 20px; font-size: 0.9rem; color: rgba(255, 255, 255, 0.5);">We typically respond within 24-48 hours.</p>
+            <p style="margin-top:16px; font-size:0.88rem; color:rgba(255,255,255,0.45);">Genellikle 24–48 saat içinde yanıt veririz.</p>
         </div>
-        
-        <footer>
-            <p>© 2026 Nomatch. All rights reserved.</p>
-            <p><a href="index.html">Privacy Policy</a></p>
-        </footer>
+
     </div>
+
+    <!-- ===================== ENGLISH ===================== -->
+    <div id="content-en" style="display:none">
+
+        <div class="card">
+            <h2>🎮 How to Play</h2>
+
+            <h3>Radar Mode (default)</h3>
+            <ol class="step-list">
+                <li>Place two phones flat on a table with their <strong>tops pointing toward each other</strong>.</li>
+                <li>Tap the <strong>triangle button</strong> in the center of both phones.</li>
+                <li>Phones pair automatically via Bluetooth.</li>
+                <li>Each round, two images appear — tap your favorite.</li>
+                <li>5 matches → victory, 5 differences → defeat.</li>
+            </ol>
+
+            <h3>Public Transport Mode (metro, bus)</h3>
+            <ol class="step-list">
+                <li><strong>Swipe left</strong> on the main screen to enter public transport mode.</li>
+                <li>Nearby phones running Tap!Match appear as <strong>dots</strong> on screen.</li>
+                <li>Tap a dot to send a match request.</li>
+                <li>If the other player accepts, the game begins.</li>
+            </ol>
+        </div>
+
+        <div class="card">
+            <h2>❓ Frequently Asked Questions</h2>
+
+            <div class="faq-item">
+                <p class="faq-q">Why won't the phones connect?</p>
+                <p class="faq-a">Make sure Bluetooth is enabled on both phones. In radar mode, the tops of both phones must face each other within 1–2 metres. Use a flat, non-metallic surface.</p>
+            </div>
+
+            <div class="faq-item">
+                <p class="faq-q">Do I need an internet connection?</p>
+                <p class="faq-a">No. Tap!Match is fully offline — all communication happens directly over Bluetooth.</p>
+            </div>
+
+            <div class="faq-item">
+                <p class="faq-q">Why do the phone tops need to face each other?</p>
+                <p class="faq-a">The app uses motion sensors to confirm both players are sitting face-to-face. This is a core part of the experience.</p>
+            </div>
+
+            <div class="faq-item">
+                <p class="faq-q">No dots appear in public transport mode?</p>
+                <p class="faq-a">The other person must also have Tap!Match open and be in public transport mode. Make sure Bluetooth permission is granted.</p>
+            </div>
+
+            <div class="faq-item">
+                <p class="faq-q">Does the app collect my data?</p>
+                <p class="faq-a">No. Tap!Match collects no personal data and requires no account. See our <a href="index.html">Privacy Policy</a> for details.</p>
+            </div>
+
+            <div class="faq-item">
+                <p class="faq-q">Can I play on Android?</p>
+                <p class="faq-a">Tap!Match is currently available on iOS only.</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🔧 Troubleshooting</h2>
+
+            <h3>Pairing Issues</h3>
+            <ul>
+                <li>Bluetooth must be enabled on both phones.</li>
+                <li>Place phones on a flat, non-metallic surface.</li>
+                <li>Tops must face each other within 1–2 metres.</li>
+                <li>Close and reopen the app on both devices.</li>
+                <li>Low power mode can cause unstable connections — disable it.</li>
+            </ul>
+
+            <h3>Connection Drops</h3>
+            <ul>
+                <li>Avoid moving the phones during gameplay.</li>
+                <li>Keep phones away from other Bluetooth devices.</li>
+                <li>Keep the app in the foreground to prevent the screen from locking.</li>
+            </ul>
+
+            <div class="highlight">
+                If the issue persists, fully close the app on both phones, reopen it, and try pairing again.
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📧 Contact</h2>
+            <p>Still having trouble? We're here to help.</p>
+            <div class="contact-box">
+                <span class="icon">✉️</span>
+                <div class="contact-info">
+                    <strong>Email Support</strong>
+                    <a href="mailto:omurgurel@gmail.com">omurgurel@gmail.com</a>
+                </div>
+            </div>
+            <p style="margin-top:16px; font-size:0.88rem; color:rgba(255,255,255,0.45);">We typically respond within 24–48 hours.</p>
+        </div>
+
+    </div>
+
+    <footer>
+        <p>© 2026 Tap!Match. All rights reserved.</p>
+        <p style="margin-top:6px"><a href="index.html" id="footer-privacy">Gizlilik Politikası</a></p>
+    </footer>
+
+</div>
+
+<script>
+    function setLang(lang) {
+        document.querySelectorAll('.lang-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelector(`.lang-btn[onclick="setLang('${lang}')"]`).classList.add('active');
+
+        document.getElementById('content-tr').style.display = lang === 'tr' ? 'block' : 'none';
+        document.getElementById('content-en').style.display = lang === 'en' ? 'block' : 'none';
+        document.getElementById('subtitle-tr').style.display = lang === 'tr' ? 'block' : 'none';
+        document.getElementById('subtitle-en').style.display = lang === 'en' ? 'block' : 'none';
+
+        const navPrivacy = document.getElementById('nav-privacy');
+        const navSupport = document.getElementById('nav-support');
+        const footerPrivacy = document.getElementById('footer-privacy');
+
+        if (lang === 'tr') {
+            navPrivacy.textContent = 'Gizlilik Politikası';
+            navSupport.textContent = 'Destek';
+            footerPrivacy.textContent = 'Gizlilik Politikası';
+        } else {
+            navPrivacy.textContent = 'Privacy Policy';
+            navSupport.textContent = 'Support';
+            footerPrivacy.textContent = 'Privacy Policy';
+        }
+
+        document.documentElement.lang = lang;
+    }
+</script>
 </body>
 </html>

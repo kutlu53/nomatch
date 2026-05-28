@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 import '../app/pairing_manager.dart';
+import '../theme/game_colors.dart';
+import '../theme/app_background.dart';
 
 /// Eşleşme başarısızlık ekranı - tragic animasyon
 class PairingFailedScreen extends StatefulWidget {
@@ -36,11 +38,11 @@ class _PairingFailedScreenState extends State<PairingFailedScreen>
 
     _controller.forward();
 
-    // Pairing ekranına geri dön 4 saniye sonra
-    Future.delayed(const Duration(milliseconds: 4000), () {
-      if (mounted) {
-        // TODO: Restart pairing
-      }
+    // 4 saniye animasyon → hardReset → radar ekranı idle durumda açılır.
+    // Kullanıcı üçgene dokunarak taramayı başlatır; otomatik başlatma yok.
+    Future.delayed(const Duration(milliseconds: 4000), () async {
+      if (!mounted) return;
+      await widget.pairingManager.hardReset();
     });
   }
 
@@ -53,20 +55,21 @@ class _PairingFailedScreenState extends State<PairingFailedScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: InkPlum.base,
       body: Stack(
         children: [
-          // 🖤 Dark romantic background
+          // ✅ Ink Plum gradient background
           Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: Alignment.center,
+                radius: 1.2,
                 colors: [
-                  Color(0xFF1A1A2E), // Very dark blue
-                  Color(0xFF16213E), // Dark navy
-                  Color(0xFF0F3460), // Dark red-blue
+                  InkPlum.surface.withOpacity(0.3),
+                  InkPlum.base,
+                  InkPlum.edge,
                 ],
-                stops: [0.0, 0.5, 1.0],
+                stops: const [0.0, 0.6, 1.0],
               ),
             ),
           ),
@@ -112,7 +115,7 @@ class _SadParticlesPainter extends CustomPainter {
         final opacity = math.max(0, 1.0 - (particleT * 2));
         final radius = 2 + (particleT * 3);
 
-        paint.color = Colors.red.withOpacity(opacity * 0.6);
+        paint.color = GameColors.failureGlow.withOpacity(opacity * 0.6);
         canvas.drawCircle(Offset(x, y), radius, paint);
       }
     }
@@ -128,6 +131,10 @@ class _BrokenHeartsPainter extends CustomPainter {
 
   _BrokenHeartsPainter(this.animation) : super(repaint: animation);
 
+  // ✅ Ink Plum uyumlu failure renkleri
+  static const _heartColor = GameColors.failurePrimary;
+  static const _glowColor = GameColors.failureGlow;
+
   @override
   void paint(Canvas canvas, Size size) {
     final t = animation.value;
@@ -141,18 +148,18 @@ class _BrokenHeartsPainter extends CustomPainter {
       final scale = lerpDouble(0.0, 1.0, scaleT)!;
       final opacity = appearT;
 
-      // Left heart (red)
+      // Left heart
       _drawHeart(canvas, 
         Offset(center.dx - 80, center.dy - 40),
         heartSize * scale,
-        Colors.red.withOpacity(opacity),
+        _heartColor.withOpacity(opacity),
       );
 
-      // Right heart (red)
+      // Right heart
       _drawHeart(canvas,
         Offset(center.dx + 80, center.dy - 40),
         heartSize * scale,
-        Colors.red.withOpacity(opacity),
+        _heartColor.withOpacity(opacity),
       );
     }
 
@@ -187,7 +194,7 @@ class _BrokenHeartsPainter extends CustomPainter {
       _drawHeart(canvas, 
         Offset.zero,
         heartSize,
-        Colors.red.withOpacity(opacity),
+        _heartColor.withOpacity(opacity),
       );
       canvas.restore();
 
@@ -197,7 +204,7 @@ class _BrokenHeartsPainter extends CustomPainter {
       _drawHeart(canvas,
         Offset.zero,
         heartSize,
-        Colors.red.withOpacity(opacity),
+        _heartColor.withOpacity(opacity),
       );
       canvas.restore();
 
@@ -205,7 +212,7 @@ class _BrokenHeartsPainter extends CustomPainter {
       if (moveT > 0.3) {
         final glowIntensity = math.sin(moveT * math.pi * 4) * 0.5 + 0.5;
         final glowPaint = Paint()
-          ..color = Colors.red.withOpacity(0.3 * glowIntensity * (1.0 - moveT))
+          ..color = _glowColor.withOpacity(0.3 * glowIntensity * (1.0 - moveT))
           ..maskFilter = MaskFilter.blur(BlurStyle.normal, 20 * glowIntensity);
 
         canvas.drawCircle(Offset(leftX, leftY), heartSize * 1.5, glowPaint);
@@ -228,13 +235,13 @@ class _BrokenHeartsPainter extends CustomPainter {
       _drawBrokenHeart(canvas,
         Offset(leftX, fallY),
         heartSize * (1.0 - breakT * 0.5),
-        Colors.red.withOpacity(scatterOpacity * 0.7),
+        _heartColor.withOpacity(scatterOpacity * 0.7),
       );
 
       _drawBrokenHeart(canvas,
         Offset(rightX, fallY),
         heartSize * (1.0 - breakT * 0.5),
-        Colors.red.withOpacity(scatterOpacity * 0.7),
+        _heartColor.withOpacity(scatterOpacity * 0.7),
       );
 
       // Small floating particles from broken hearts
@@ -246,7 +253,7 @@ class _BrokenHeartsPainter extends CustomPainter {
         final particleOpacity = math.max(0, 1.0 - (breakT * 2));
 
         final particlePaint = Paint()
-          ..color = Colors.red.withOpacity(particleOpacity * 0.5);
+          ..color = _glowColor.withOpacity(particleOpacity * 0.5);
         canvas.drawCircle(Offset(px, py), 2 + (breakT * 2), particlePaint);
 
         // Right side particles
