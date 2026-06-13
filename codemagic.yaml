@@ -42,6 +42,8 @@ workflows:
     integrations:
       app_store_connect: tapmatch_asc
     environment:
+      groups:
+        - a
       vars:
         BUNDLE_ID: "app.arikan.tapmatch"
       flutter: stable
@@ -59,7 +61,6 @@ workflows:
         script: |
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE \
-            --certificate-type DISTRIBUTION \
             --create
       - name: Add certificates to keychain
         script: keychain add-certificates
