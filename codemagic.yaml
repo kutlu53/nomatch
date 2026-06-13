@@ -34,3 +34,37 @@ workflows:
     artifacts:
       - build/ios/iphonesimulator/Runner.app.zip
       - appetize_response.json
+
+  ios-release:
+    name: iOS App Store Release (TestFlight)
+    instance_type: mac_mini_m1
+    max_build_duration: 60
+    integrations:
+      app_store_connect: tapmatch_asc
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: app.arikan.tapmatch
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Get Flutter packages
+        script: flutter pub get
+      - name: Install CocoaPods dependencies
+        script: |
+          find . -name "Podfile" -maxdepth 2 -execdir pod install \;
+      - name: Set up code signing settings on Xcode project
+        script: xcode-project use-profiles
+      - name: Build ipa for App Store
+        script: |
+          flutter build ipa --release \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false
