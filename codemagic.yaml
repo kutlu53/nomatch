@@ -57,6 +57,14 @@ workflows:
           find . -name "Podfile" -maxdepth 2 -execdir pod install \;
       - name: Set up keychain
         script: keychain initialize
+      - name: Check certificate private key
+        script: |
+          if [ -z "$CERTIFICATE_PRIVATE_KEY" ]; then
+            echo "CERTIFICATE_PRIVATE_KEY is NOT set in this workflow's environment."
+          else
+            echo "CERTIFICATE_PRIVATE_KEY is set, length=${#CERTIFICATE_PRIVATE_KEY}"
+            echo "First line: $(echo "$CERTIFICATE_PRIVATE_KEY" | head -1)"
+          fi
       - name: Fetch signing files
         script: |
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
