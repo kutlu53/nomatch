@@ -1,0 +1,27 @@
+workflows:
+  ios-simulator-preview:
+    name: iOS Simulator Preview (Appetize)
+    instance_type: mac_mini_m1
+    max_build_duration: 30
+    environment:
+      flutter: stable
+    scripts:
+      - name: Get Flutter packages
+        script: flutter pub get
+      - name: Build iOS app for Simulator
+        script: flutter build ios --simulator --release
+      - name: Zip Simulator build
+        script: |
+          cd build/ios/iphonesimulator
+          zip -r Runner.app.zip Runner.app
+      - name: Upload to Appetize.io
+        script: |
+          curl https://api.appetize.io/v1/apps \
+            -u "$APPETIZE_API_TOKEN:" \
+            -F "file=@build/ios/iphonesimulator/Runner.app.zip" \
+            -F "platform=ios" \
+            -F "note=TapMatch preview" \
+            | tee appetize_response.json
+    artifacts:
+      - build/ios/iphonesimulator/Runner.app.zip
+      - appetize_response.json
