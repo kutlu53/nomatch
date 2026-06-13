@@ -42,9 +42,6 @@ workflows:
     integrations:
       app_store_connect: tapmatch_asc
     environment:
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: app.arikan.tapmatch
       vars:
         BUNDLE_ID: "app.arikan.tapmatch"
       flutter: stable
