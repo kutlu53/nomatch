@@ -1,5 +1,3 @@
-import 'dart:async';
-
 /// Pairing state machine
 enum PairingState {
   idle,           // Başlangıç

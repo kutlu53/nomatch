@@ -251,7 +251,13 @@ import CoreMotion
       
       // Apply circular smoothing
       let smoothedHeading = self.smoothHeading(heading)
-      
+
+      // Manyetometre doğruluğunu logla (kalibrasyon sorunlarını tespit için)
+      let magAccuracy = motion.magneticField.accuracy
+      if magAccuracy == .uncalibrated || magAccuracy == .low {
+        print("[FUSION-iOS] ⚠️ Düşük mag doğruluğu: \(magAccuracy.rawValue) — yön güvenilmeyebilir")
+      }
+
       // Send to Flutter
       channel.invokeMethod("heading", arguments: smoothedHeading)
     }

@@ -1,5 +1,5 @@
-import 'dart:developer' as dev;
 import 'dart:math' as math;
+import '../../../core/debug_config.dart';
 import 'question_bank.dart';
 
 /// Lazy loading question provider - sadece ilk erişimde yüklenir
@@ -8,22 +8,18 @@ class LazyQuestionProvider implements QuestionProvider {
   bool _loading = false;
   
   Future<void> _ensureLoaded() async {
-    if (_loaded != null || _loading) {
-      dev.log("QUESTIONS: _ensureLoaded - already loaded or loading: _loaded=${_loaded != null}, _loading=$_loading");
-      return;
-    }
+    if (_loaded != null || _loading) return;
     _loading = true;
     
     try {
-      dev.log("QUESTIONS: lazy loading started (without seed - will be set by reshuffleForSession)");
-      // ✅ Load without seed - reshuffleForSession will set the proper seed
+      questionsLog('lazy loading started');
       _loaded = await ManifestQuestionBank.loadFromAsset(
         'assets/questions/questions_manifest.json',
-        seed: null,  // ✅ No seed initially
+        seed: null,
       );
-      dev.log("QUESTIONS: lazy loading completed - _loaded is now ${_loaded != null ? "LOADED" : "NULL"}");
+      questionsLog('lazy loading completed');
     } catch (e) {
-      dev.log("QUESTIONS: lazy loading failed: $e");
+      questionsLog('lazy loading failed: $e');
       _loaded = _FallbackQuestionProvider();
     } finally {
       _loading = false;
@@ -33,29 +29,19 @@ class LazyQuestionProvider implements QuestionProvider {
   @override
   QuestionPair getById(int qid) {
     if (_loaded == null) {
-      // Henüz yüklenmemişse fallback döndür
-      dev.log("QUESTIONS: getById called before loading, using fallback");
-      final fallback = _FallbackQuestionProvider().getById(qid);
-      dev.log("QUESTIONS: fallback getById($qid) -> top=${fallback.topAsset}, bottom=${fallback.bottomAsset}");
-      return fallback;
+      return _FallbackQuestionProvider().getById(qid);
     }
     try {
-      final pair = _loaded!.getById(qid);
-      dev.log("QUESTIONS: getById($qid) -> top=${pair.topAsset}, bottom=${pair.bottomAsset}");
-      return pair;
+      return _loaded!.getById(qid);
     } catch (e) {
-      dev.log("QUESTIONS: getById($qid) error: $e, using fallback");
+      questionsLog('getById($qid) error: $e');
       return _FallbackQuestionProvider().getById(qid);
     }
   }
 
   @override
   int nextQid() {
-    if (_loaded == null) {
-      // Henüz yüklenmemişse fallback döndür
-      dev.log("QUESTIONS: nextQid called before loading, using fallback");
-      return _FallbackQuestionProvider().nextQid();
-    }
+    if (_loaded == null) return _FallbackQuestionProvider().nextQid();
     return _loaded!.nextQid();
   }
   
@@ -66,23 +52,24 @@ class LazyQuestionProvider implements QuestionProvider {
   
   /// Session başladığında soruları belirtilen seed ile karıştır
   Future<void> reshuffleForSession(String sessionId, [int? explicitSeed]) async {
-    // Eğer henüz load olmadıysa load et
     await _ensureLoaded();
-    
-    // ✅ Use explicit seed if provided (from leader), otherwise use default
+
     final int seed = explicitSeed ?? 0;
-    dev.log("QUESTIONS: reshuffling with seed: $seed");
-    
+    questionsLog('reshuffling with seed: $seed');
+
     try {
-      // ✅ Completely reload with seed
-      _loaded = await ManifestQuestionBank.loadFromAsset(
-        'assets/questions/questions_manifest.json',
-        seed: seed,
-      );
-      dev.log("QUESTIONS: ✅ reshuffle completed - new order with seed=$seed");
+      // Zaten yüklüyse JSON'ı yeniden okumak yerine mevcut veriden yeni sıralama üret
+      if (_loaded is ManifestQuestionBank) {
+        _loaded = (_loaded as ManifestQuestionBank).reorderWithSeed(seed);
+      } else {
+        _loaded = await ManifestQuestionBank.loadFromAsset(
+          'assets/questions/questions_manifest.json',
+          seed: seed,
+        );
+      }
+      questionsLog('reshuffle completed');
     } catch (e) {
-      dev.log("QUESTIONS: ❌ ERROR during reshuffle: $e");
-      // Fallback: error durumunda iterator reset et
+      questionsLog('ERROR during reshuffle: $e');
       if (_loaded is ManifestQuestionBank) {
         (_loaded as ManifestQuestionBank).resetIterator();
       }

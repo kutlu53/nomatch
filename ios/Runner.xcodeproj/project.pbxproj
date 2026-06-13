@@ -11,6 +11,12 @@
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
+		AAADD4AC68DB0E8F404DAC52 /* BLEAdvertisingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A4ABD298797D08AA2E35903 /* BLEAdvertisingManager.swift */; };
+		D2AC47CF29A85D32C2B3ED7B /* NomatchP2pPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8748B6092F78196B94069E5A /* NomatchP2pPlugin.swift */; };
+		6BB7C802B10A03A60EABCA72 /* OrientationFusionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA25958FA59BE0EDD3A683D1 /* OrientationFusionManager.swift */; };
+		9AB496387DFC2EA159408626 /* OrientationStreamHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78560D3BAB74E111405AF483 /* OrientationStreamHandler.swift */; };
+		7AB98D481EE87A555682D955 /* OrientationVectorManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3C069650701B807AA133DDD /* OrientationVectorManager.swift */; };
+		7E2906CF0F3DC3E8D2029924 /* RotationVectorManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9800FE72A7DBEBE8313A128 /* RotationVectorManager.swift */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
@@ -47,6 +53,12 @@
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		4A4ABD298797D08AA2E35903 /* BLEAdvertisingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BLEAdvertisingManager.swift; sourceTree = "<group>"; };
+		8748B6092F78196B94069E5A /* NomatchP2pPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NomatchP2pPlugin.swift; sourceTree = "<group>"; };
+		BA25958FA59BE0EDD3A683D1 /* OrientationFusionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrientationFusionManager.swift; sourceTree = "<group>"; };
+		78560D3BAB74E111405AF483 /* OrientationStreamHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrientationStreamHandler.swift; sourceTree = "<group>"; };
+		F3C069650701B807AA133DDD /* OrientationVectorManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrientationVectorManager.swift; sourceTree = "<group>"; };
+		D9800FE72A7DBEBE8313A128 /* RotationVectorManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RotationVectorManager.swift; sourceTree = "<group>"; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Debug.xcconfig; path = Flutter/Debug.xcconfig; sourceTree = "<group>"; };
 		9740EEB31CF90195004384FC /* Generated.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; name = Generated.xcconfig; path = Flutter/Generated.xcconfig; sourceTree = "<group>"; };
@@ -117,6 +129,12 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
+				4A4ABD298797D08AA2E35903 /* BLEAdvertisingManager.swift */,
+				8748B6092F78196B94069E5A /* NomatchP2pPlugin.swift */,
+				BA25958FA59BE0EDD3A683D1 /* OrientationFusionManager.swift */,
+				78560D3BAB74E111405AF483 /* OrientationStreamHandler.swift */,
+				F3C069650701B807AA133DDD /* OrientationVectorManager.swift */,
+				D9800FE72A7DBEBE8313A128 /* RotationVectorManager.swift */,
 			);
 			path = Runner;
 			sourceTree = "<group>";
@@ -270,6 +288,12 @@
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
+				AAADD4AC68DB0E8F404DAC52 /* BLEAdvertisingManager.swift in Sources */,
+				D2AC47CF29A85D32C2B3ED7B /* NomatchP2pPlugin.swift in Sources */,
+				6BB7C802B10A03A60EABCA72 /* OrientationFusionManager.swift in Sources */,
+				9AB496387DFC2EA159408626 /* OrientationStreamHandler.swift in Sources */,
+				7AB98D481EE87A555682D955 /* OrientationVectorManager.swift in Sources */,
+				7E2906CF0F3DC3E8D2029924 /* RotationVectorManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -350,7 +374,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Profile;
@@ -368,7 +392,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.nomatch;
+				PRODUCT_BUNDLE_IDENTIFIER = app.arikan.tapmatch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
@@ -384,7 +408,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.nomatch.RunnerTests;
+				PRODUCT_BUNDLE_IDENTIFIER = app.arikan.tapmatch.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -401,7 +425,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.nomatch.RunnerTests;
+				PRODUCT_BUNDLE_IDENTIFIER = app.arikan.tapmatch.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Runner.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Runner";
@@ -416,7 +440,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.nomatch.RunnerTests;
+				PRODUCT_BUNDLE_IDENTIFIER = app.arikan.tapmatch.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Runner.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Runner";
@@ -427,7 +451,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = AppIcon;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
 				CLANG_CXX_LIBRARY = "libc++";
@@ -476,7 +500,7 @@
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -484,7 +508,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
-				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = AppIcon;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++0x";
 				CLANG_CXX_LIBRARY = "libc++";
@@ -529,7 +553,7 @@
 				SUPPORTED_PLATFORMS = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
@@ -547,7 +571,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.nomatch;
+				PRODUCT_BUNDLE_IDENTIFIER = app.arikan.tapmatch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -569,7 +593,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.nomatch;
+				PRODUCT_BUNDLE_IDENTIFIER = app.arikan.tapmatch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OBJC_BRIDGING_HEADER = "Runner/Runner-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;

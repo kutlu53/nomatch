@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart' hide DisconnectReason;
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../core/debug_config.dart';
 import '../p2p/p2p_events.dart';
 import '../p2p/p2p_messages.dart';
 import '../p2p/p2p_codec.dart';
@@ -25,59 +26,47 @@ class BleP2pPlugin {
   BleP2pPlugin() {
     platform.setMethodCallHandler(_handlePlatformCall);
     peripheralChannel.setMethodCallHandler(_handlePeripheralCall);
-    dev.log('[BLE] ✅ BleP2pPlugin initialized - listening on both channels');
+    bleLog('✅ BleP2pPlugin initialized - listening on both channels');
   }
   
   Future<dynamic> _handlePlatformCall(MethodCall call) async {
-    print('[BLE-DART] 📞 Platform method call: ${call.method}');
-    dev.log('[BLE-DART] 📞 Platform method call: ${call.method}');
+    bleLog('📞 Platform method call: ${call.method}');
     switch (call.method) {
       case 'onCharacteristicWrite':
-        print('[BLE-DART] ✅ onCharacteristicWrite called!');
-        dev.log('[BLE-DART] ✅ onCharacteristicWrite method called with arguments type: ${call.arguments.runtimeType}');
+        bleLog('✅ onCharacteristicWrite called!');
         _onCharacteristicWriteFromiOS(call.arguments);
         return null;
       default:
-        print('[BLE-DART] ⚠️ Unknown method: ${call.method}');
-        dev.log('[BLE-DART] ⚠️ Unknown platform method: ${call.method}');
+        bleLog('⚠️ Unknown method: ${call.method}');
         return null;
     }
   }
   
   Future<dynamic> _handlePeripheralCall(MethodCall call) async {
-    print('[BLE-DART-PERIPH] 📞 Peripheral channel call: ${call.method}');
-    dev.log('[BLE-DART-PERIPH] 📞 Peripheral channel call: ${call.method}');
+    bleLog('📞 Peripheral channel call: ${call.method}');
     switch (call.method) {
       case 'onWrite':
-        print('[BLE-DART-PERIPH] ✅ onWrite called!');
-        dev.log('[BLE-DART-PERIPH] ✅ onWrite called with data type: ${call.arguments.runtimeType}');
+        bleLog('✅ onWrite called!');
         _onCharacteristicWriteFromiOS(call.arguments);
         return null;
       default:
-        print('[BLE-DART-PERIPH] ⚠️ Unknown method: ${call.method}');
-        dev.log('[BLE-DART-PERIPH] ⚠️ Unknown peripheral method: ${call.method}');
+        bleLog('⚠️ Unknown method: ${call.method}');
         return null;
     }
   }
   
   void _onCharacteristicWriteFromiOS(dynamic arguments) {
-    print('[BLE-DART] 🔍 Processing iOS write - type: ${arguments.runtimeType}');
-    dev.log('[BLE-DART] 🔍 Processing iOS write - arguments type: ${arguments.runtimeType}');
+    bleLog('🔍 Processing iOS write - type: ${arguments.runtimeType}');
     if (arguments is List<int>) {
-      print('[BLE-DART] 📩 Received write: ${arguments.length} bytes');
-      dev.log('[BLE-DART] 📩 Received characteristic write from iOS peripheral (${arguments.length} bytes)');
-      dev.log('[BLE-DART]   └─ First 50 bytes: ${arguments.take(50).toList()}');
+      bleLog('📩 Received write: ${arguments.length} bytes');
       _onMessageReceived(arguments);
     } else if (arguments is List && arguments.isNotEmpty) {
-      print('[BLE-DART] 📩 Casting arguments to List<int>');
-      dev.log('[BLE-DART] 📩 Attempting to cast arguments to List<int>');
+      bleLog('📩 Casting arguments to List<int>');
       final bytes = (arguments as List).cast<int>();
-      print('[BLE-DART] 📩 Received write (casted): ${bytes.length} bytes');
-      dev.log('[BLE-DART] 📩 Received characteristic write from iOS peripheral (${bytes.length} bytes) - casted');
+      bleLog('📩 Received write (casted): ${bytes.length} bytes');
       _onMessageReceived(bytes);
     } else {
-      print('[BLE-DART] ❌ Invalid args type: ${arguments.runtimeType}');
-      dev.log('[BLE-DART] ❌ Invalid arguments type for onCharacteristicWrite: ${arguments.runtimeType}');
+      bleLog('❌ Invalid args type: ${arguments.runtimeType}');
     }
   }
   
@@ -94,6 +83,10 @@ class BleP2pPlugin {
   BluetoothCharacteristic? _messageChar;
   BluetoothCharacteristic? _sensorChar;
   bool _isConnecting = false; // Prevent concurrent connection attempts
+  
+  // ✅ FIX: Store discovered devices for explicit connect()
+  final Map<String, BluetoothDevice> _discoveredDevices = {};
+  bool _autoConnectEnabled = true; // Can be disabled by upper layer
   
   // Stream subscriptions for proper cleanup
   StreamSubscription<BluetoothAdapterState>? _adapterStateSub;
@@ -206,42 +199,112 @@ class BleP2pPlugin {
   Future<void> connect({required String peerId}) async {
     dev.log('BLE_P2P: Connect to $peerId');
     
-    // In BLE, connection happens automatically on discovery
-    // This is called from upper layer, we can ignore or use for explicit connect
+    // ✅ FIX: Actually connect to the stored device
+    final device = _discoveredDevices[peerId];
+    if (device == null) {
+      dev.log('BLE_P2P: ⚠️ Device $peerId not found in discovered devices');
+      return;
+    }
+    
+    if (_connectedDevice != null) {
+      dev.log('BLE_P2P: ⚠️ Already connected to ${_connectedDevice!.remoteId}');
+      return;
+    }
+    
+    if (_isConnecting) {
+      dev.log('BLE_P2P: ⚠️ Already connecting, ignoring');
+      return;
+    }
+    
+    dev.log('BLE_P2P: 🔗 Explicit connect to $peerId');
+    await _connectToDevice(device);
+  }
+
+  /// Disconnect from current device without touching advertising/scanning state.
+  /// Used to reject a "ghost" connection the upper layer no longer expects
+  /// (e.g. arrived after PairingManager's connection timeout already reset).
+  Future<void> disconnect() async {
+    if (_connectedDevice == null) return;
+
+    dev.log('BLE_P2P: 🔌 Disconnecting ghost connection');
+
+    // Bu disconnect kasıtlı — üst katman için PeerDisconnected event'i
+    // emit edilmesin diye dinleyiciyi önce iptal ediyoruz.
+    await _connectionStateSub?.cancel();
+    _connectionStateSub = null;
+
+    try {
+      await _connectedDevice!.disconnect();
+    } catch (e) {
+      dev.log('BLE_P2P: ⚠️ Error disconnecting ghost device: $e');
+    }
+
+    _connectedDevice = null;
+    _messageChar = null;
+    _sensorChar = null;
+    _isConnecting = false;
+    _peerId = null;
+  }
+
+  /// Enable or disable auto-connect on discovery
+  void setAutoConnect(bool enabled) {
+    _autoConnectEnabled = enabled;
+    dev.log('BLE_P2P: Auto-connect ${enabled ? "enabled" : "disabled"}');
   }
   
-  /// Send message to connected peer
-  Future<void> send(P2pMessage message) async {
+  /// Send message to connected peer with retry logic
+  Future<void> send(P2pMessage message, {int maxRetries = 3}) async {
     print('[BLE-SEND] 🚀 send() called for ${message.runtimeType}');
     
     if (_messageChar == null) {
       print('[BLE-SEND] ❌ Not connected (_messageChar is null)');
       dev.log('[BLE-SEND] ❌ Not connected, cannot send');
-      return;
+      throw Exception('send failed: not connected');
     }
     
     print('[BLE-SEND] ✅ Connected, proceeding with send');
     
-    try {
-      final json = message.toJson();
-      final data = utf8.encode(jsonEncode(json));
-      
-      print('[BLE-SEND] 📤 SENDING ${message.runtimeType} (${data.length} bytes)');
-      dev.log('[BLE-SEND] 📤 SENDING MESSAGE to peer');
-      dev.log('[BLE-SEND]   └─ Char UUID: ${_messageChar?.uuid}');
-      dev.log('[BLE-SEND]   └─ Data size: ${data.length} bytes');
-      dev.log('[BLE-SEND]   └─ Type: ${message.runtimeType}');
-      
-      // BLE has MTU limit, chunk if needed
-      await _sendChunked(data);
-      
-      print('[BLE-SEND] ✅ Sent successfully!');
-      dev.log('[BLE-SEND] ✅ Sent ${message.runtimeType}');
-    } catch (e) {
-      print('[BLE-SEND] ❌ Send error: $e');
-      dev.log('[BLE-SEND] ❌ Send failed: $e');
-      _emitError('send_failed', e.toString());
+    final json = message.toJson();
+    final data = utf8.encode(jsonEncode(json));
+    
+    // ✅ Retry logic for important messages (share, heartbeat)
+    int attempt = 0;
+    Exception? lastError;
+    
+    while (attempt < maxRetries) {
+      attempt++;
+      try {
+        print('[BLE-SEND] 📤 SENDING ${message.runtimeType} (attempt $attempt/$maxRetries, ${data.length} bytes)');
+        dev.log('[BLE-SEND] 📤 SENDING MESSAGE to peer (attempt $attempt)');
+        dev.log('[BLE-SEND]   └─ Char UUID: ${_messageChar?.uuid}');
+        dev.log('[BLE-SEND]   └─ Data size: ${data.length} bytes');
+        dev.log('[BLE-SEND]   └─ Type: ${message.runtimeType}');
+        
+        // BLE has MTU limit, chunk if needed
+        await _sendChunked(data);
+        
+        print('[BLE-SEND] ✅ Sent successfully!');
+        dev.log('[BLE-SEND] ✅ Sent ${message.runtimeType}');
+        return; // Success, exit retry loop
+        
+      } catch (e) {
+        lastError = e is Exception ? e : Exception(e.toString());
+        print('[BLE-SEND] ⚠️ Send attempt $attempt failed: $e');
+        dev.log('[BLE-SEND] ⚠️ Send attempt $attempt failed: $e');
+        
+        if (attempt < maxRetries) {
+          // Wait before retry (exponential backoff)
+          final delay = Duration(milliseconds: 200 * attempt);
+          print('[BLE-SEND] ⏳ Retrying in ${delay.inMilliseconds}ms...');
+          await Future.delayed(delay);
+        }
+      }
     }
+    
+    // All retries failed
+    print('[BLE-SEND] ❌ Send failed after $maxRetries attempts: $lastError');
+    dev.log('[BLE-SEND] ❌ Send failed after $maxRetries attempts: $lastError');
+    _emitError('send_failed', lastError.toString());
   }
   
   /// Stop all BLE operations
@@ -265,6 +328,77 @@ class BleP2pPlugin {
     _isAdvertising = false;
     _peerId = null;
     
+    _emitStateChanged('idle');
+  }
+  
+  /// 🔄 HARD RESET: Complete BLE cleanup for fresh start
+  /// Call this when returning to pairing screen after a game
+  Future<void> hardReset() async {
+    dev.log('[BLE] 🔄🔄🔄 HARD RESET STARTED 🔄🔄🔄');
+    
+    // 1. Stop native advertising
+    if (_isAdvertising) {
+      try {
+        await platform.invokeMethod<void>('stopAdvertising');
+        dev.log('[BLE] 📣 Native advertising stopped');
+      } catch (e) {
+        dev.log('[BLE] ⚠️ Error stopping advertising: $e');
+      }
+    }
+    
+    // 2. Disconnect BLE device
+    if (_connectedDevice != null) {
+      try {
+        dev.log('[BLE] 🔌 Disconnecting device: ${_connectedDevice!.remoteId}');
+        await _connectedDevice!.disconnect();
+        dev.log('[BLE] ✅ Device disconnected');
+      } catch (e) {
+        dev.log('[BLE] ⚠️ Error disconnecting: $e');
+      }
+    }
+    
+    // 3. Stop scanning
+    try {
+      await FlutterBluePlus.stopScan();
+      dev.log('[BLE] 🔍 Scan stopped');
+    } catch (e) {
+      dev.log('[BLE] ⚠️ Error stopping scan: $e');
+    }
+    
+    // 4. Cancel ALL stream subscriptions
+    await _scanResultsSub?.cancel();
+    await _isScanningStateSub?.cancel();
+    await _connectionStateSub?.cancel();
+    await _messageStreamSub?.cancel();
+    await _sensorStreamSub?.cancel();
+    
+    _scanResultsSub = null;
+    _isScanningStateSub = null;
+    _connectionStateSub = null;
+    _messageStreamSub = null;
+    _sensorStreamSub = null;
+    
+    dev.log('[BLE] 🧹 All subscriptions cancelled');
+    
+    // 5. Reset ALL state variables
+    _connectedDevice = null;
+    _messageChar = null;
+    _sensorChar = null;
+    _peerId = null;
+    _sessionId = _generateSessionId(); // Fresh session ID
+    _isHost = false;
+    _isScanning = false;
+    _isAdvertising = false;
+    _isConnecting = false;
+    _discoveredDevices.clear(); // ✅ Clear stored devices
+    _autoConnectEnabled = true; // ✅ Re-enable auto-connect
+    
+    dev.log('[BLE] 🧹 All state variables reset');
+    
+    // 6. Small delay to ensure BLE stack is fully cleared
+    await Future.delayed(const Duration(milliseconds: 300));
+    
+    dev.log('[BLE] ✅✅✅ HARD RESET COMPLETE ✅✅✅');
     _emitStateChanged('idle');
   }
   
@@ -336,11 +470,21 @@ class BleP2pPlugin {
       });
       dev.log('BLE_P2P: Subscribed to scan results');
       
-      // Listen to scan completion
+      // Listen to scan completion — auto-restart if hosting (radar mode needs continuous scan)
       _isScanningStateSub = FlutterBluePlus.isScanning.listen((scanning) {
         if (!scanning && _isScanning) {
-          dev.log('BLE_P2P: Scan timeout');
+          dev.log('BLE_P2P: Scan timeout — restarting scan');
           _isScanning = false;
+          
+          // ✅ FIX: Auto-restart scan if we're still hosting (looking for peers)
+          if (_isAdvertising && _connectedDevice == null && !_isDisposed) {
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (!_isScanning && !_isDisposed && _isAdvertising) {
+                dev.log('BLE_P2P: 🔄 Restarting scan after timeout');
+                _startScanning();
+              }
+            });
+          }
         }
       });
       
@@ -416,16 +560,20 @@ class BleP2pPlugin {
     final peerId = device.remoteId.toString();
     dev.log('[BLE] ✅ Valid Nomatch peer discovered - ID: $peerId | Name: ${device.platformName} | RSSI: ${rssi}dBm');
     
+    // ✅ FIX: Store device for later explicit connect()
+    _discoveredDevices[peerId] = device;
+    
     // Emit peer discovered event
     _emitPeerDiscovered(peerId, rssi);
     
-    // Auto-connect if not already connected to this specific peer
-    // Only proceed if: (1) no device connected, (2) not already connecting, OR (3) different peer
-    if (_connectedDevice == null && !_isConnecting) {
+    // ✅ FIX: Only auto-connect if enabled (PairingManager can disable this)
+    if (_autoConnectEnabled && _connectedDevice == null && !_isConnecting) {
       if (_peerId == null || _peerId != peerId) {
-        dev.log('[BLE] 🔗 Attempting connection to $peerId');
+        dev.log('[BLE] 🔗 Auto-connecting to $peerId');
         _connectToDevice(device);
       }
+    } else if (!_autoConnectEnabled) {
+      dev.log('[BLE] ℹ️ Auto-connect disabled - waiting for explicit connect()');
     } else {
       dev.log('[BLE] ℹ️ Cannot connect: _connectedDevice=${_connectedDevice != null}, _isConnecting=$_isConnecting');
     }
@@ -529,19 +677,23 @@ class BleP2pPlugin {
         dev.log('[BLE] ⚠️ Service characteristics not available, continuing without characteristic subscriptions');
       }
       
-      // Determine leader (device with larger ID is leader)
+      // ✅ FIX: Leader = smaller ID (consistent with PairingManager's LeaderAlgorithm)
       final myId = _appInstanceId ?? '';
       final peerId = device.remoteId.toString();
       _peerId = peerId;
-      final isLeader = myId.compareTo(peerId) > 0;
+      final isLeader = myId.compareTo(peerId) < 0; // ✅ Smaller ID = leader
       
       dev.log('[BLE] ✅ ✅ ✅ CONNECTED ✅ ✅ ✅');
       dev.log('[BLE]   - Peer ID: $peerId');
       dev.log('[BLE]   - My ID: $myId');
       dev.log('[BLE]   - Comparison: "$myId".compareTo("$peerId") = ${myId.compareTo(peerId)}');
-      dev.log('[BLE]   - Is Leader (myId > peerId)? ${myId.compareTo(peerId) > 0}');
+      dev.log('[BLE]   - Is Leader (myId < peerId)? ${myId.compareTo(peerId) < 0}');
       dev.log('[BLE]   - Role: ${isLeader ? 'LEADER' : 'FOLLOWER'}');
       dev.log('[BLE]   - Session ID: $_sessionId');
+      
+      // ✅ FIX: Stop scanning after successful connection — no need to discover more peers
+      await _stopScanning();
+      dev.log('[BLE] 🔍 Scanning stopped after successful connection');
       
       _emitConnected(peerId, isLeader);
       _isConnecting = false; // Connection succeeded, allow new attempts

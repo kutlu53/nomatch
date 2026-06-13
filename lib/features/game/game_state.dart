@@ -1,4 +1,4 @@
-enum GamePhase { idle, pairing, playing, terminalFail, terminalSuccess, share }
+enum GamePhase { idle, pairing, playing, terminalFail, terminalSuccess, share, restarting }
 
 enum Choice { top, bottom, none }
 

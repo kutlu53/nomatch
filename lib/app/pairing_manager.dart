@@ -14,23 +14,6 @@ import '../features/game/game_state.dart';
 import '../features/game/lazy_question_provider.dart';
 import '../services/notification_service.dart';
 
-/// Peer information for radar display
-final class PeerInfo {
-  final String id;
-  final int rssi;
-  final double? heading;
-  final bool isConnecting;
-  final bool isConnected;
-  
-  const PeerInfo({
-    required this.id,
-    required this.rssi,
-    this.heading,
-    this.isConnecting = false,
-    this.isConnected = false,
-  });
-}
-
 /// Peer state in public transport mode
 enum PublicPeerState {
   idle,       // Just discovered, no interaction
@@ -138,9 +121,18 @@ class PairingManager {
   Stream<bool> get connectionStatus => _connectionStatusController.stream;
   bool _isConnected = true;
   bool get isConnected => _isConnected;
+
+  /// ✅ Heading doğrulaması başarısız olup retry edildiğinde emit edilir
+  /// (UI'da kısa bir uyarı pulse'ı göstermek için).
+  final _headingRetryController = StreamController<void>.broadcast();
+  Stream<void> get headingRetryEvents => _headingRetryController.stream;
   
   // Discovery-only mode (public transport mode)
   bool _discoveryOnlyMode = false;
+  // ✅ PairingScreen oyun/hata sonrası yeniden oluşturulduğunda hangi
+  // sayfada (radar/public) başlayacağını belirlemek için son aktif modu sakla.
+  bool _lastActiveModeWasPublic = false;
+  bool get lastSessionWasPublic => _lastActiveModeWasPublic;
   final Map<String, DiscoveredPeer> _discoveredPeers = {};
   final _discoveredPeersController = StreamController<List<DiscoveredPeer>>.broadcast();
   Stream<List<DiscoveredPeer>> get discoveredPeers => _discoveredPeersController.stream;
@@ -394,6 +386,7 @@ class PairingManager {
   void setPublicMode(bool isPublic) {
     pairingLog('[MODE] Setting public mode: $isPublic (BLE unchanged)');
     _discoveryOnlyMode = isPublic;
+    _lastActiveModeWasPublic = isPublic;
 
     if (isPublic) {
       // Public moda geçiş: cleanup timer'ı başlat
@@ -597,6 +590,7 @@ class PairingManager {
     
     // Move the auto-expire timer to the new key
     _timers.cancel('pending_request_$phantomKey');
+    _timers.cancel('public_request_expire_$phantomKey');
     _timers.schedule('pending_request_$bleDeviceId', const Duration(seconds: 30), () {
       _pendingPublicRequests.remove(bleDeviceId);
       _pendingRequestsController.add(_pendingPublicRequests.isNotEmpty);
@@ -671,6 +665,11 @@ class PairingManager {
         lastSeen: DateTime.now(),
         state: PublicPeerState.requested,
       );
+      // ✅ Phantom kaydı _pendingPublicRequests'e de ekle ki BLE taraması
+      // gerçek peer'ı (BLE ID) bulduğunda _mergePhantomPendingRequest()
+      // bu phantom'u tanıyıp gerçek dot ile birleştirebilsin.
+      _pendingPublicRequests.add(matchedPeerId);
+      _pendingRequestsController.add(_pendingPublicRequests.isNotEmpty);
     }
     _discoveredPeersController.add(_discoveredPeers.values.toList());
 
@@ -706,14 +705,39 @@ class PairingManager {
   /// Accept a pair request from a peer
   Future<void> _acceptPublicPairRequest(String peerId) async {
     pairingLog('[PUBLIC] 📤 Accepting pair from $peerId');
-    
-    try {
-      final msg = PairAckMessage(sid: deviceId);
-      await blePlugin.send(msg);
-      _completePublicPairing(peerId);
-    } catch (e) {
-      pairingLog('[PUBLIC] ❌ Failed to accept pair: $e');
+
+    // ✅ Reverse connection (connect()+discoverServices()) bazen 500ms'den
+    // uzun sürebiliyor; tek denemede _messageChar hâlâ null kalırsa send()
+    // sessizce başarısız oluyor ve dokunuş "algılanmamış" gibi görünüyordu.
+    // Birkaç kez deneyerek bu zamanlama farkını tolere ediyoruz.
+    const maxAttempts = 3;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      // İstek bu sırada karşı taraf tarafından iptal edilmiş olabilir.
+      if (_discoveredPeers[peerId]?.state != PublicPeerState.requested) {
+        pairingLog('[PUBLIC] ⚠️ Accept aborted - $peerId no longer requested');
+        return;
+      }
+
+      try {
+        // Bu cihaz PairIntent'i bağlantıyı başlatmadan (peripheral rolünde)
+        // aldıysa _messageChar henüz null'dur — PeerConnected event'i sadece
+        // bağlantıyı başlatan central'a gelir. Reverse connection: biz de
+        // central olarak bağlanalım (zaten bağlıysak connect() no-op).
+        await blePlugin.connect(peerId: peerId);
+        await Future.delayed(const Duration(milliseconds: 500));
+
+        final msg = PairAckMessage(sid: deviceId);
+        await blePlugin.send(msg);
+        _completePublicPairing(peerId);
+        return;
+      } catch (e) {
+        pairingLog('[PUBLIC] ❌ Accept attempt $attempt/$maxAttempts failed: $e');
+        if (attempt < maxAttempts) {
+          await Future.delayed(const Duration(milliseconds: 500));
+        }
+      }
     }
+    pairingLog('[PUBLIC] ❌ Failed to accept pair from $peerId after $maxAttempts attempts');
   }
   
   /// Handle receiving a pair accept in public mode
@@ -856,9 +880,14 @@ class PairingManager {
     }
 
     try {
+      // Önceki BLE operasyonu (hosting/scan) hâlâ aktifse temiz başlangıç için
+      // önce durdur — aksi halde startHosting()/startDiscovery() "already
+      // advertising/scanning" guard'larına takılıp no-op olur.
+      await blePlugin.stop();
+
       // Reset state from previous attempts
       _reset();
-      
+
       // 1. Start heading validator
       await headingValidator.start();
       _setState(PairingState.hostingReady);
@@ -916,6 +945,7 @@ class PairingManager {
         _state == PairingState.preConnected ||
         _state == PairingState.headingValidating ||
         _state == PairingState.connected ||
+        _state == PairingState.failed ||
         _state == PairingState.game ||
         _state == PairingState.gameReady ||
         _state == PairingState.playing) {
@@ -1014,10 +1044,30 @@ class PairingManager {
       return;
     }
     
+    // ✅ "Hayalet" bağlantı: connection timeout sonrası _reset() ile _peerId
+    // temizlendi, ama BLE katmanındaki connect() (20s) daha sonra tamamlandı.
+    // PairingManager artık bu peer'ı beklemiyor — bağlantıyı reddet, BLE'yi
+    // temizle ve taramaya devam et.
+    if (_peerId == null) {
+      pairingLog('[CONN] ⚠️ Ghost connection rejected (peerId=$peerId) — muhtemelen timeout sonrası geldi');
+      blePlugin.disconnect();
+      if (_state == PairingState.peerSearching) {
+        blePlugin.startDiscovery();
+      }
+      return;
+    }
+
     // Ignore if peer doesn't match what we discovered
     // (this prevents connecting to wrong devices)
     if (_peerId != null && _peerId != peerId) {
       pairingLog('[CONN] ⚠️ Ignoring mismatched peer connection. Expected: $_peerId, Got: $peerId');
+      // Bu da geç gelen bir "hayalet" bağlantı — BLE katmanında kurulmuş
+      // durumda kalırsa _connectedDevice dolu kalır ve beklenen peer'a
+      // bağlanmayı kalıcı olarak engeller (deadlock). Temizle ve taramaya devam et.
+      blePlugin.disconnect();
+      if (_state == PairingState.peerSearching) {
+        blePlugin.startDiscovery();
+      }
       return;
     }
     
@@ -1234,7 +1284,12 @@ class PairingManager {
     _ourHeading = null;
     _peerHeading = null;
     _peerHeadingReceived = false; // ✅ Reset peer heading flag for retry
-    
+
+    // ✅ UI'a kısa bir uyarı pulse'ı için sinyal gönder
+    if (!_headingRetryController.isClosed) {
+      _headingRetryController.add(null);
+    }
+
     // Restart heading validation - wait for peer heading again, then validate
     _timers.schedule(_kTimerHeadingValidation, _peerHeadingWaitTimeout, () {
       pairingLog('[CONN] ⏰ Heading validation retry timer fired!');
@@ -1488,24 +1543,10 @@ class PairingManager {
   /// Fail pairing
   Future<void> _failPairing(String reason) async {
     pairingLog('[PAIR] ❌ Pairing failed: $reason');
-    _setState(PairingState.failed);
-    await Future.delayed(const Duration(milliseconds: 500));
-
-    // Native pusulayı durdur (Bug 1 fix'i sayesinde gerçekten durur)
-    await headingValidator.stop();
     _reset();
-
-    // BLE bağlantısını kapat ve yeniden başlat.
-    // _reset() sonrası _peerId temizlendi; PeerDisconnected olayı yine de
-    // gelebilir ama handlePeerDisconnected() içinde guard'lar onu zararsız kılar.
-    await blePlugin.stop();
-    await Future.delayed(const Duration(milliseconds: 200));
-
-    await headingValidator.start();
-    await blePlugin.startHosting(displayNameHash: deviceId);
-    await blePlugin.startDiscovery();
-
-    _setState(PairingState.peerSearching);
+    _setState(PairingState.failed);
+    // PairingFailedScreen 4s animasyon sonunda hardReset() çağırır → idle.
+    // Kullanıcı üçgene basarak taramayı yeniden başlatır.
   }
 
   /// Stop pairing (pause, not permanent cleanup)
@@ -1547,6 +1588,10 @@ class PairingManager {
     // 5. Hard reset BLE plugin (most important!)
     await blePlugin.hardReset();
     pairingLog('[PAIR] 📡 BLE plugin hard reset complete');
+
+    // ✅ FIX: blePlugin.hardReset() auto-connect'i tekrar true yapıyor.
+    // Bağlantı kararları her zaman PairingManager'da kalmalı (bkz. constructor).
+    blePlugin.setAutoConnect(false);
     
     // 6. Reset ALL state variables
     _peerId = null;
@@ -1747,6 +1792,7 @@ class PairingManager {
     await _connectionStatusController.close();
     await _discoveredPeersController.close();
     await _pendingRequestsController.close();
+    await _headingRetryController.close();
     
     pairingLog('[PAIR] ✅ Cleanup complete');
   }

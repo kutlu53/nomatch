@@ -1,19 +1,21 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
+
+import '../core/debug_config.dart';
 
 /// Heading validation using Sensor Fusion
 /// 
 /// Uses device's fused orientation sensors:
 /// - iOS: CMDeviceMotion.attitude (Accel + Gyro + Mag fusion)
 /// - Android: TYPE_ROTATION_VECTOR (Accel + Gyro + Mag fusion)
+/// - Web: Not supported (graceful fallback)
 /// 
 /// This provides much more stable heading than magnetometer alone.
 class HeadingValidator {
   static const platform = MethodChannel('com.nomatch/compass');
-  
-  StreamSubscription? _headingSubscription;
-  
+
   // Heading buffer for stability
   final List<double> _headingBuffer = [];
   static const int bufferSize = 10; // Buffer for averaging
@@ -33,28 +35,38 @@ class HeadingValidator {
   
   void _ensureController() {
     if (_headingController == null || _headingController!.isClosed) {
-      print('[HEADING] 🔄 Creating new heading stream controller');
+      headingLog('🔄 Creating new heading stream controller');
       _headingController = StreamController<double>.broadcast();
     }
   }
 
   /// Start listening to device compass/heading (Sensor Fusion)
   Future<void> start() async {
-    print('[FUSION] 🧭 Heading validator started - using Sensor Fusion');
-    print('[FUSION]   └─ iOS: CMDeviceMotion.attitude.yaw');
-    print('[FUSION]   └─ Android: TYPE_ROTATION_VECTOR');
     _ensureController(); // ✅ Ensure controller exists before starting
     _headingBuffer.clear(); // ✅ Clear buffer for fresh start
+    
+    if (kIsWeb) {
+      headingLog('🌐 Web platform - heading validation skipped');
+    } else {
+      headingLog('🧭 Heading validator started - using Sensor Fusion');
+      headingLog('   └─ iOS: CMDeviceMotion.attitude.yaw');
+      headingLog('   └─ Android: TYPE_ROTATION_VECTOR');
+    }
+    
     _startCompass();
   }
 
   /// Stop listening (but don't close stream permanently)
   Future<void> stop() async {
-    print('[HEADING] 🛑 Stopping heading validator');
-    await _headingSubscription?.cancel();
-    _headingSubscription = null;
-    // ✅ FIX: Don't close controller - it will be reused
-    // Controller will be closed only in dispose()
+    headingLog('🛑 Stopping heading validator');
+    // Native pusulayı durdur — MethodChannel üzerinden geldiği için subscription
+    // cancel'ı yetmez, native tarafı da açıkça durdurmak gerekir.
+    try {
+      await platform.invokeMethod('stopCompass');
+      headingLog('✅ Native compass stopped');
+    } catch (e) {
+      headingLog('⚠️ stopCompass failed (ignored): $e');
+    }
   }
 
   /// Update heading value
@@ -91,6 +103,16 @@ class HeadingValidator {
 
   /// Start Sensor Fusion heading updates
   void _startCompass() {
+    // ✅ Web platform doesn't have native compass - skip gracefully
+    if (kIsWeb) {
+      headingLog('⚠️ Web platform detected - compass not available');
+      headingLog('   └─ Heading validation disabled on web');
+      // Set a default heading for web testing
+      _currentHeading = 0.0;
+      _isStable = true;
+      return;
+    }
+    
     try {
       // Listen to fused heading stream from native
       platform.setMethodCallHandler((call) async {
@@ -103,20 +125,21 @@ class HeadingValidator {
       
       // Tell native to start sensor fusion
       platform.invokeMethod('startCompass').then((_) {
-        print('[FUSION] ✅ Sensor Fusion compass started');
+        headingLog('✅ Sensor Fusion compass started');
       }).catchError((e) {
-        print('[FUSION] ❌ Failed to start Sensor Fusion: $e');
+        headingLog('❌ Failed to start Sensor Fusion: $e');
       });
     } catch (e) {
-      print('[FUSION] ❌ Sensor Fusion initialization error: $e');
+      headingLog('❌ Sensor Fusion initialization error: $e');
     }
   }
 
   /// Permanently dispose (only call when app is shutting down)
   Future<void> dispose() async {
-    print('[HEADING] 🗑️ Disposing heading validator permanently');
-    await _headingSubscription?.cancel();
-    _headingSubscription = null;
+    headingLog('🗑️ Disposing heading validator permanently');
+    try {
+      await platform.invokeMethod('stopCompass');
+    } catch (_) {}
     await _headingController?.close();
     _headingController = null;
   }

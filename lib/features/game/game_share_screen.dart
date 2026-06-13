@@ -2,9 +2,17 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import '../../ui/color_palette_manager.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../theme/game_colors.dart';
+import '../../theme/app_background.dart';
 import 'game_engine.dart';
 import 'game_state.dart';
+
+/// ✅ PERFORMANCE: Debug logging control
+const bool _kShareScreenDebug = false;
+void _ssLog(String msg) {
+  if (_kShareScreenDebug) print(msg);
+}
 
 /// Game Share Screen - Eski ShareScreen UI'ı ile
 /// Kullanıcılar bilgilerini paylaşırlar
@@ -12,11 +20,13 @@ import 'game_state.dart';
 class GameShareScreen extends StatefulWidget {
   final GameEngine engine;
   final VoidCallback onReset;
+  final Stream<bool>? connectionStatus; // ✅ BLE connection status stream
 
   const GameShareScreen({
     super.key,
     required this.engine,
     required this.onReset,
+    this.connectionStatus,
   });
 
   @override
@@ -49,21 +59,29 @@ class _GameShareScreenState extends State<GameShareScreen>
 
   Timer? _autoResetTimer;
 
+  // Peer bekleniyor göstergesi
+  late AnimationController _waitingPulseController;
+
+  // ✅ Connection status tracking
+  StreamSubscription<bool>? _connectionSub;
+  bool _isReconnecting = false;
+  late AnimationController _reconnectPulseController;
+
   @override
   void initState() {
     super.initState();
-    print("[SHARE-SCREEN] 📱 ═══════════════════════════════════════");
-    print("[SHARE-SCREEN] 📱 Share screen açıldı!");
-    print("[SHARE-SCREEN] 📱 ═══════════════════════════════════════");
+    _ssLog("[SHARE-SCREEN] 📱 ═══════════════════════════════════════");
+    _ssLog("[SHARE-SCREEN] 📱 Share screen açıldı!");
+    _ssLog("[SHARE-SCREEN] 📱 ═══════════════════════════════════════");
 
     // Listen to game state for peer share updates
     _gameStateSubscription = widget.engine.states.listen((state) {
       if (mounted) {
-        print("[SHARE-SCREEN] 🔄 DURUM GÜNCELLENDİ:");
-        print("[SHARE-SCREEN]    - Benim paylaştığım: $_hasShared");
-        print("[SHARE-SCREEN]    - Rakıp paylaştı: ${state.peerShared}");
-        print("[SHARE-SCREEN]    - Rakıp değeri: ${state.peerShareValue}");
-        print("[SHARE-SCREEN]    - Rakıp türü: ${state.peerShareKind}");
+        _ssLog("[SHARE-SCREEN] 🔄 DURUM GÜNCELLENDİ:");
+        _ssLog("[SHARE-SCREEN]    - Benim paylaştığım: $_hasShared");
+        _ssLog("[SHARE-SCREEN]    - Rakıp paylaştı: ${state.peerShared}");
+        _ssLog("[SHARE-SCREEN]    - Rakıp değeri: ${state.peerShareValue}");
+        _ssLog("[SHARE-SCREEN]    - Rakıp türü: ${state.peerShareKind}");
 
         setState(() {
           _peerHasShared = state.peerShared ?? false;
@@ -73,10 +91,10 @@ class _GameShareScreenState extends State<GameShareScreen>
 
         // ✅ Her iki oyuncu da paylaştığında ShareResultScreen'e geç
         if (_hasShared && _peerHasShared && _peerValue != null) {
-          print("[SHARE-SCREEN] ✅ ═══════════════════════════════════════");
-          print("[SHARE-SCREEN] ✅ HER İKİ OYUNCU DA PAYLAŞTI!");
-          print("[SHARE-SCREEN] ✅ İşlem: ShareResultScreen'e geçiliyor...");
-          print("[SHARE-SCREEN] ✅ ═══════════════════════════════════════");
+          _ssLog("[SHARE-SCREEN] ✅ ═══════════════════════════════════════");
+          _ssLog("[SHARE-SCREEN] ✅ HER İKİ OYUNCU DA PAYLAŞTI!");
+          _ssLog("[SHARE-SCREEN] ✅ İşlem: ShareResultScreen'e geçiliyor...");
+          _ssLog("[SHARE-SCREEN] ✅ ═══════════════════════════════════════");
           _goToShareResultScreen();
         }
       }
@@ -86,10 +104,10 @@ class _GameShareScreenState extends State<GameShareScreen>
     _peerHasShared = widget.engine.state.peerShared ?? false;
     _peerValue = widget.engine.state.peerShareValue;
     _peerShareKind = widget.engine.state.peerShareKind;
-    print("[SHARE-SCREEN] 🔍 İlk durum kontrol:");
-    print("[SHARE-SCREEN]    - Benim paylaştığım: $_hasShared");
-    print("[SHARE-SCREEN]    - Rakıp paylaştı: $_peerHasShared");
-    print("[SHARE-SCREEN]    - Rakıp değeri: $_peerValue");
+    _ssLog("[SHARE-SCREEN] 🔍 İlk durum kontrol:");
+    _ssLog("[SHARE-SCREEN]    - Benim paylaştığım: $_hasShared");
+    _ssLog("[SHARE-SCREEN]    - Rakıp paylaştı: $_peerHasShared");
+    _ssLog("[SHARE-SCREEN]    - Rakıp değeri: $_peerValue");
 
     // Animations
     _slideController = AnimationController(
@@ -114,10 +132,31 @@ class _GameShareScreenState extends State<GameShareScreen>
       CurvedAnimation(parent: _fadeController, curve: Curves.easeInOutCubic),
     );
 
-    // ✅ 30 saniye sonra auto-reset
+    // ✅ Reconnect pulse animation
+    _reconnectPulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..repeat(reverse: true);
+
+    // Peer bekleniyor pulse (local gönderdi, peer henüz göndermedi)
+    _waitingPulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+
+    // ✅ Listen to connection status
+    _connectionSub = widget.connectionStatus?.listen((isConnected) {
+      if (mounted) {
+        setState(() => _isReconnecting = !isConnected);
+        _ssLog('[SHARE-SCREEN] 📡 Connection status: ${isConnected ? "✅ Connected" : "⚠️ Reconnecting..."}');
+      }
+    });
+
+    // 30 saniye içinde peer paylaşmazsa sıfırla.
+    // Local paylaşınca timer yeniden başlatılır (bkz. _onShareSendPressed).
     _autoResetTimer = Timer(const Duration(seconds: 30), () {
       if (mounted && !_transitioning && !_peerHasShared) {
-        print("[SHARE-SCREEN] ⏱️ 30 saniye geçti, peer paylaşmadı - reset");
+        _ssLog("[SHARE-SCREEN] ⏱️ 30 saniye geçti, peer paylaşmadı - reset");
         _doReset();
       }
     });
@@ -129,6 +168,9 @@ class _GameShareScreenState extends State<GameShareScreen>
     _focus.dispose();
     _slideController.dispose();
     _gameStateSubscription.cancel();
+    _connectionSub?.cancel();
+    _reconnectPulseController.dispose();
+    _waitingPulseController.dispose();
     _longPressTimer?.cancel();
     _fadeController.dispose();
     _autoResetTimer?.cancel();
@@ -151,7 +193,12 @@ class _GameShareScreenState extends State<GameShareScreen>
   }
 
   void _onShareKindSelected(ShareKind kind) {
-    print("[SHARE-SCREEN] 📱 Paylaşım türü seçildi: $kind");
+    _ssLog("[SHARE-SCREEN] 📱 Paylaşım türü seçildi: $kind");
+    // Aynı platforma tekrar dokunmak formu kapatır.
+    if (_selectedShareKind == kind) {
+      _dismissForm();
+      return;
+    }
     setState(() {
       _selectedShareKind = kind;
       _text.text = "";
@@ -162,17 +209,25 @@ class _GameShareScreenState extends State<GameShareScreen>
     });
   }
 
+  void _dismissForm() {
+    setState(() => _selectedShareKind = null);
+    _slideController.reverse();
+    _focus.unfocus();
+  }
+
   void _onShareSendPressed() {
     if (_text.text.isEmpty) {
-      print("[SHARE-SCREEN] ⚠️ Boş bilgi paylaşılamaz");
+      _ssLog("[SHARE-SCREEN] ⚠️ Boş bilgi paylaşılamaz");
+      // Boş gönderme girişimine dokunsal geri bildirim ver.
+      HapticFeedback.mediumImpact();
       return;
     }
 
     final value = _text.text;
     final kind = _selectedShareKind!;
-    print("[SHARE-SCREEN] 📤 GÖNDERME BAŞLATILDI:");
-    print("[SHARE-SCREEN]    - Paylaşım türü: $kind");
-    print("[SHARE-SCREEN]    - Bilgi: $value");
+    _ssLog("[SHARE-SCREEN] 📤 GÖNDERME BAŞLATILDI:");
+    _ssLog("[SHARE-SCREEN]    - Paylaşım türü: $kind");
+    _ssLog("[SHARE-SCREEN]    - Bilgi: $value");
 
     // Engine'e paylaş mesajı gönder
     widget.engine.sendShareOffer(
@@ -180,22 +235,33 @@ class _GameShareScreenState extends State<GameShareScreen>
       value: value,
     );
 
-    print("[SHARE-SCREEN] ✅ Engine'e gönderildi!");
-    print("[SHARE-SCREEN] 🔄 UI güncelleniyor...");
+    _ssLog("[SHARE-SCREEN] ✅ Engine'e gönderildi!");
+    _ssLog("[SHARE-SCREEN] 🔄 UI güncelleniyor...");
 
     setState(() {
       _hasShared = true;
       _selectedShareKind = null;
-      print("[SHARE-SCREEN] ✅ _hasShared = true (yerel paylaşım tamamlandı)");
+      _ssLog("[SHARE-SCREEN] ✅ _hasShared = true (yerel paylaşım tamamlandı)");
+    });
+
+    // Local gönderdi: eski timer'ı iptal et, peer için 30s daha ver.
+    // Önceki timer ekran açılışından itibaren sayıyordu; local gönderdikten
+    // sonra peer'in da bilgisini yazması için taze süre tanımak gerekir.
+    _autoResetTimer?.cancel();
+    _autoResetTimer = Timer(const Duration(seconds: 30), () {
+      if (mounted && !_transitioning && !_peerHasShared) {
+        _ssLog("[SHARE-SCREEN] ⏱️ Local sonrası 30s doldu, peer paylaşmadı - reset");
+        _doReset();
+      }
     });
 
     // ✅ Kontrol: Her iki oyuncu da paylaştı mı?
-    print("[SHARE-SCREEN] 🔍 Kontrol:");
-    print("[SHARE-SCREEN]    - Benim paylaştığım: $_hasShared");
-    print("[SHARE-SCREEN]    - Rakıp paylaştı: $_peerHasShared");
-    print("[SHARE-SCREEN]    - Rakıp değeri: $_peerValue");
+    _ssLog("[SHARE-SCREEN] 🔍 Kontrol:");
+    _ssLog("[SHARE-SCREEN]    - Benim paylaştığım: $_hasShared");
+    _ssLog("[SHARE-SCREEN]    - Rakıp paylaştı: $_peerHasShared");
+    _ssLog("[SHARE-SCREEN]    - Rakıp değeri: $_peerValue");
     if (_hasShared && _peerHasShared && _peerValue != null) {
-      print("[SHARE-SCREEN] ✅ ÇÖZÜLEBİLİR: Her iki oyuncu da paylaştı!");
+      _ssLog("[SHARE-SCREEN] ✅ ÇÖZÜLEBİLİR: Her iki oyuncu da paylaştı!");
       _goToShareResultScreen();
     }
 
@@ -206,23 +272,23 @@ class _GameShareScreenState extends State<GameShareScreen>
 
   void _goToShareResultScreen() {
     if (_transitioning) {
-      print("[SHARE-SCREEN] ⚠️ Zaten geçiş yapılıyor, tekrar çağrı görmezden gel");
+      _ssLog("[SHARE-SCREEN] ⚠️ Zaten geçiş yapılıyor, tekrar çağrı görmezden gel");
       return;
     }
 
-    print("[SHARE-SCREEN] 🎬 ═══════════════════════════════════════");
-    print("[SHARE-SCREEN] 🎬 RESULT SCREEN'E GEÇİŞ BAŞLATILDI");
-    print("[SHARE-SCREEN] 🎬 ═══════════════════════════════════════");
-    print("[SHARE-SCREEN]    - Rakıp değeri: $_peerValue");
-    print("[SHARE-SCREEN]    - Rakıp türü: $_peerShareKind");
+    _ssLog("[SHARE-SCREEN] 🎬 ═══════════════════════════════════════");
+    _ssLog("[SHARE-SCREEN] 🎬 RESULT SCREEN'E GEÇİŞ BAŞLATILDI");
+    _ssLog("[SHARE-SCREEN] 🎬 ═══════════════════════════════════════");
+    _ssLog("[SHARE-SCREEN]    - Rakıp değeri: $_peerValue");
+    _ssLog("[SHARE-SCREEN]    - Rakıp türü: $_peerShareKind");
 
     setState(() => _transitioning = true);
     
-    print("[SHARE-SCREEN] 🎨 Fade animasyon başlatılıyor...");
+    _ssLog("[SHARE-SCREEN] 🎨 Fade animasyon başlatılıyor...");
     _fadeController.forward().then((_) {
       if (mounted) {
-        print("[SHARE-SCREEN] 🎨 Fade animasyon tamamlandı");
-        print("[SHARE-SCREEN] 📍 GameShareResultScreen push ediliyor...");
+        _ssLog("[SHARE-SCREEN] 🎨 Fade animasyon tamamlandı");
+        _ssLog("[SHARE-SCREEN] 📍 GameShareResultScreen push ediliyor...");
         
         // ShareResultScreen'e push et
         Navigator.of(context).push(
@@ -238,45 +304,45 @@ class _GameShareScreenState extends State<GameShareScreen>
           ),
         );
         
-        print("[SHARE-SCREEN] ✅ GameShareResultScreen'e başarıyla geçildi!");
+        _ssLog("[SHARE-SCREEN] ✅ GameShareResultScreen'e başarıyla geçildi!");
       }
     });
   }
 
   void _onLongPressStart() {
-    print("[SHARE-SCREEN] Long press başladı");
+    _ssLog("[SHARE-SCREEN] Long press başladı");
     setState(() => _longPressActive = true);
 
     _longPressTimer = Timer(const Duration(seconds: 3), () {
       if (!mounted) return;
-      print("[SHARE-SCREEN] 3 saniye tutuldu! Reset yapılıyor...");
+      _ssLog("[SHARE-SCREEN] 3 saniye tutuldu! Reset yapılıyor...");
       _doReset();
     });
   }
 
   void _onLongPressEnd() {
-    print("[SHARE-SCREEN] Long press bitti");
+    _ssLog("[SHARE-SCREEN] Long press bitti");
     _longPressTimer?.cancel();
     setState(() => _longPressActive = false);
   }
 
   void _doReset() {
     if (_transitioning) {
-      print("[SHARE-SCREEN] ⚠️ Zaten geçiş yapılıyor, reset görmezden gel");
+      _ssLog("[SHARE-SCREEN] ⚠️ Zaten geçiş yapılıyor, reset görmezden gel");
       return;
     }
 
-    print("[SHARE-SCREEN] 🔄 ═══════════════════════════════════════");
-    print("[SHARE-SCREEN] 🔄 RESET BAŞLATILDI!");
-    print("[SHARE-SCREEN] 🔄 ═══════════════════════════════════════");
-    print("[SHARE-SCREEN]    - Benim paylaştığım: $_hasShared");
-    print("[SHARE-SCREEN]    - Rakıp paylaştı: $_peerHasShared");
-    print("[SHARE-SCREEN]    - Aksiyon: Pairing ekranına dönülüyor...");
+    _ssLog("[SHARE-SCREEN] 🔄 ═══════════════════════════════════════");
+    _ssLog("[SHARE-SCREEN] 🔄 RESET BAŞLATILDI!");
+    _ssLog("[SHARE-SCREEN] 🔄 ═══════════════════════════════════════");
+    _ssLog("[SHARE-SCREEN]    - Benim paylaştığım: $_hasShared");
+    _ssLog("[SHARE-SCREEN]    - Rakıp paylaştı: $_peerHasShared");
+    _ssLog("[SHARE-SCREEN]    - Aksiyon: Pairing ekranına dönülüyor...");
 
     setState(() => _transitioning = true);
     _fadeController.forward().then((_) {
       if (mounted) {
-        print("[SHARE-SCREEN] ✅ Reset - pairing ekranına dönülüyor");
+        _ssLog("[SHARE-SCREEN] ✅ Reset - pairing ekranına dönülüyor");
         widget.onReset();
       }
     });
@@ -285,30 +351,25 @@ class _GameShareScreenState extends State<GameShareScreen>
   @override
   Widget build(BuildContext context) {
     final hasSelection = _selectedShareKind != null;
-    final paletteManager = ColorPaletteManager();
-    final colors = paletteManager.currentPalette.colors;
 
     return Scaffold(
+      backgroundColor: Colors.transparent, // ✅ Ink Plum background shows through
       resizeToAvoidBottomInset: true, // ✅ Klavye açılınca içerik yukarı kayar
       body: GestureDetector(
         onLongPressStart: (_) => _onLongPressStart(),
         onLongPressEnd: (_) => _onLongPressEnd(),
         child: Stack(
           children: [
-            // ✅ Gradient background (with selected palette & gradient type)
-            Container(
-              decoration: BoxDecoration(
-                gradient: paletteManager.currentGradient,
-              ),
-            ),
-
             // ✅ Split-screen layout (eski UI gibi)
             SafeArea(
               child: Column(
                 children: [
                   // ✅ ÜSTTE: WhatsApp
                   Expanded(
-                    child: GestureDetector(
+                    child: AnimatedOpacity(
+                      opacity: _hasShared ? 0.3 : 1.0,
+                      duration: const Duration(milliseconds: 400),
+                      child: GestureDetector(
                       onTapDown: (_) {
                         HapticFeedback.lightImpact();
                         setState(() => _whatsappPressed = true);
@@ -383,14 +444,49 @@ class _GameShareScreenState extends State<GameShareScreen>
                         ),
                       ),
                     ),
+                    ), // AnimatedOpacity
                   ),
+
+                  // Peer bekleniyor göstergesi: local gönderdi, peer henüz göndermedi
+                  if (_hasShared && !_peerHasShared && !hasSelection)
+                    AnimatedBuilder(
+                      animation: _waitingPulseController,
+                      builder: (context, _) => SizedBox(
+                        height: 24,
+                        child: Center(
+                          child: Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: GameColors.lime.withOpacity(
+                                0.35 + _waitingPulseController.value * 0.65,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: GameColors.lime.withOpacity(
+                                    0.2 + _waitingPulseController.value * 0.4,
+                                  ),
+                                  blurRadius: 8,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
 
                   // ✅ ORTADA: Input + Send (sadece seçilince görün)
                   if (hasSelection && !_hasShared)
-                    Container(
+                    GestureDetector(
+                      // Aşağı swipe → formu kapat
+                      onVerticalDragEnd: (details) {
+                        if ((details.primaryVelocity ?? 0) > 150) _dismissForm();
+                      },
+                      child: Container(
                       height: 200,
                       decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.3),
+                        color: InkPlum.surface.withOpacity(0.8),
                       ),
                       child: SlideTransition(
                         position: _slideAnimation,
@@ -402,11 +498,11 @@ class _GameShareScreenState extends State<GameShareScreen>
                               // ✅ Input field
                               Container(
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.95),
+                                  color: GameColors.interactiveLight.withOpacity(0.95),
                                   borderRadius: BorderRadius.circular(24),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.black.withValues(alpha: 0.15),
+                                      color: InkPlum.edge.withOpacity(0.4),
                                       blurRadius: 20,
                                       offset: const Offset(0, 8),
                                     ),
@@ -423,7 +519,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                                         Text(
                                           _prefix,
                                           style: TextStyle(
-                                            color: Colors.black.withValues(alpha: 0.4),
+                                            color: InkPlum.base.withOpacity(0.5),
                                             fontSize: 18,
                                             fontWeight: FontWeight.w500,
                                           ),
@@ -437,8 +533,8 @@ class _GameShareScreenState extends State<GameShareScreen>
                                               _selectedShareKind == ShareKind.phone
                                                   ? TextInputType.phone
                                                   : TextInputType.text,
-                                          style: const TextStyle(
-                                            color: Colors.black,
+                                          style: TextStyle(
+                                            color: InkPlum.base,
                                             fontSize: 18,
                                             fontWeight: FontWeight.w600,
                                           ),
@@ -447,8 +543,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                                             border: InputBorder.none,
                                             hintText: _placeholder,
                                             hintStyle: TextStyle(
-                                              color:
-                                                  Colors.black.withValues(alpha: 0.3),
+                                              color: InkPlum.base.withOpacity(0.35),
                                               fontWeight: FontWeight.w500,
                                             ),
                                           ),
@@ -473,11 +568,11 @@ class _GameShareScreenState extends State<GameShareScreen>
                                   width: 72,
                                   height: 72,
                                   decoration: BoxDecoration(
-                                    color: Colors.white,
+                                    color: GameColors.interactiveLight,
                                     shape: BoxShape.circle,
                                     boxShadow: [
                                       BoxShadow(
-                                        color: Colors.black.withValues(alpha: 0.2),
+                                        color: GameColors.purple.withOpacity(0.3),
                                         blurRadius: 20,
                                         offset: const Offset(0, 8),
                                       ),
@@ -485,7 +580,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                                   ),
                                   child: const Icon(
                                     Icons.arrow_forward_rounded,
-                                    color: Color(0xFF6B4CE6),
+                                    color: GameColors.purple,
                                     size: 32,
                                   ),
                                 ),
@@ -495,10 +590,14 @@ class _GameShareScreenState extends State<GameShareScreen>
                         ),
                       ),
                     ),
+                    ), // GestureDetector (swipe-down dismiss)
 
                   // ✅ ALTTA: Instagram
                   Expanded(
-                    child: GestureDetector(
+                    child: AnimatedOpacity(
+                      opacity: _hasShared ? 0.3 : 1.0,
+                      duration: const Duration(milliseconds: 400),
+                      child: GestureDetector(
                       onTapDown: (_) {
                         HapticFeedback.lightImpact();
                         setState(() => _instagramPressed = true);
@@ -569,10 +668,32 @@ class _GameShareScreenState extends State<GameShareScreen>
                         ),
                       ),
                     ),
+                    ), // AnimatedOpacity
                   ),
                 ],
               ),
             ),
+
+            // ✅ RECONNECT INDICATOR (yazısız - sadece yanıp sönen turuncu border)
+            if (_isReconnecting)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: AnimatedBuilder(
+                    animation: _reconnectPulseController,
+                    builder: (context, child) {
+                      final pulse = _reconnectPulseController.value;
+                      return Container(
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: GameColors.reconnecting.withOpacity(0.3 + (pulse * 0.5)),
+                            width: 4 + (pulse * 2),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
 
             // ✅ Fade overlay
             if (_transitioning)
@@ -580,7 +701,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                 child: FadeTransition(
                   opacity: _fadeAnimation,
                   child: Container(
-                    color: Colors.black,
+                    color: InkPlum.base,
                   ),
                 ),
               ),
@@ -617,12 +738,13 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
   Timer? _longPressTimer;
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
+  late AnimationController _progressController;
   bool _transitioning = false;
 
   @override
   void initState() {
     super.initState();
-    print("[SHARE-RESULT] 📱 Sonuç ekranı açıldı: ${widget.peerValue}");
+    _ssLog("[SHARE-RESULT] 📱 Sonuç ekranı açıldı: ${widget.peerValue}");
 
     _fadeController = AnimationController(
       vsync: this,
@@ -632,17 +754,24 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
     _fadeAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
       CurvedAnimation(parent: _fadeController, curve: Curves.easeInOutCubic),
     );
+
+    // Uzun basma ilerlemesi için — 2 saniyede 0.0 → 1.0
+    _progressController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    );
   }
 
   @override
   void dispose() {
     _longPressTimer?.cancel();
     _fadeController.dispose();
+    _progressController.dispose();
     super.dispose();
   }
 
   void _copyToClipboard() {
-    print("[SHARE-RESULT] ✅ Kopyalandı: ${widget.peerValue}");
+    _ssLog("[SHARE-RESULT] ✅ Kopyalandı: ${widget.peerValue}");
     Clipboard.setData(ClipboardData(text: widget.peerValue));
 
     setState(() => _copied = true);
@@ -653,19 +782,57 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
     });
   }
 
+  /// WhatsApp veya Instagram linkini aç
+  Future<void> _openLink() async {
+    HapticFeedback.lightImpact();
+    
+    Uri uri;
+    
+    if (widget.peerShareKind == ShareKind.phone) {
+      // WhatsApp linki - numarayı temizle (sadece rakamlar)
+      final cleanNumber = widget.peerValue.replaceAll(RegExp(r'[^\d+]'), '');
+      // Türkiye için +90 ekle (eğer yoksa)
+      final formattedNumber = cleanNumber.startsWith('+') 
+          ? cleanNumber 
+          : '+90$cleanNumber';
+      uri = Uri.parse('https://wa.me/$formattedNumber');
+      _ssLog("[SHARE-RESULT] 📱 WhatsApp açılıyor: $uri");
+    } else {
+      // Instagram linki - @ işareti varsa kaldır
+      final username = widget.peerValue.replaceAll('@', '').trim();
+      uri = Uri.parse('https://instagram.com/$username');
+      _ssLog("[SHARE-RESULT] 📸 Instagram açılıyor: $uri");
+    }
+
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        // Link açılamazsa kopyala
+        _copyToClipboard();
+        _ssLog("[SHARE-RESULT] ⚠️ Link açılamadı, panoya kopyalandı");
+      }
+    } catch (e) {
+      _ssLog("[SHARE-RESULT] ❌ Hata: $e");
+      _copyToClipboard();
+    }
+  }
+
   void _onLongPressStart() {
-    print("[SHARE-RESULT] Long press başladı");
+    _ssLog("[SHARE-RESULT] Long press başladı");
+    _progressController.forward();
     setState(() => _longPressActive = true);
 
     _longPressTimer = Timer(const Duration(seconds: 2), () {
       if (!mounted) return;
-      print("[SHARE-RESULT] 2 saniye tutuldu - Reset!");
+      _ssLog("[SHARE-RESULT] 2 saniye tutuldu - Reset!");
       _doReset();
     });
   }
 
   void _onLongPressEnd() {
     _longPressTimer?.cancel();
+    _progressController.reset();
     setState(() => _longPressActive = false);
   }
 
@@ -675,7 +842,7 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
     setState(() => _transitioning = true);
     _fadeController.forward().then((_) {
       if (mounted) {
-        print("[SHARE-RESULT] ✅ Reset - önce bu ekranı kapat, sonra full reset");
+        _ssLog("[SHARE-RESULT] ✅ Reset - önce bu ekranı kapat, sonra full reset");
         // Önce bu ekranı (GameShareResultScreen) kapat
         Navigator.of(context).pop();
         // Sonra GameShareScreen'i de kapat ve pairing'e dön
@@ -686,69 +853,112 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
 
   @override
   Widget build(BuildContext context) {
-    final paletteManager = ColorPaletteManager();
-    final colors = paletteManager.currentPalette.colors;
-
     return Scaffold(
+      backgroundColor: Colors.transparent, // ✅ Ink Plum background shows through
       resizeToAvoidBottomInset: false,
       body: GestureDetector(
+        // ✅ Stack'in boş alanları da hit-test'e dahil olsun: uzun basış
+        // sadece ortadaki bilgi kutusunda değil, ekranın her yerinde çalışsın.
+        behavior: HitTestBehavior.opaque,
         onTap: _copyToClipboard,
         onLongPressStart: (_) => _onLongPressStart(),
         onLongPressEnd: (_) => _onLongPressEnd(),
         child: Stack(
           children: [
-            // ✅ Gradient background (with selected palette & gradient type)
-            Container(
-              decoration: BoxDecoration(
-                gradient: paletteManager.currentGradient,
-              ),
-            ),
-
-            // ✅ TAM ORTADA: SADECE BILGI
+            // ✅ TAM ORTADA: İKON + BİLGİ (tıklanınca link açılır)
             SafeArea(
               child: Center(
                 child: GestureDetector(
-                  onTap: _copyToClipboard,
+                  onTap: _openLink,
+                  onDoubleTap: _copyToClipboard, // Çift tıkla kopyala
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(_copied ? 0.15 : 0.08),
+                      color: InkPlum.surface.withOpacity(_copied ? 0.9 : 0.6),
                       borderRadius: BorderRadius.circular(24),
                       border: Border.all(
-                        color: Colors.white.withOpacity(_copied ? 0.6 : 0.25),
+                        color: _copied ? GameColors.lime.withOpacity(0.6) : GameColors.borderSubtle,
                         width: 2,
                       ),
                     ),
-                    child: Text(
-                      widget.peerValue,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 32,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                      ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // ✅ İkon (WhatsApp veya Instagram)
+                        Container(
+                          width: 80,
+                          height: 80,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: widget.peerShareKind == ShareKind.phone
+                                ? const Color(0xFF25D366) // WhatsApp yeşili
+                                : const Color(0xFFE4405F), // Instagram pembe
+                            boxShadow: [
+                              BoxShadow(
+                                color: (widget.peerShareKind == ShareKind.phone
+                                        ? const Color(0xFF25D366)
+                                        : const Color(0xFFE4405F))
+                                    .withOpacity(0.4),
+                                blurRadius: 20,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          child: Center(
+                            child: SvgPicture.asset(
+                              widget.peerShareKind == ShareKind.phone
+                                  ? 'assets/branding/whatsapp-icon.svg'
+                                  : 'assets/branding/instagram-icon.svg',
+                              width: 40,
+                              height: 40,
+                              colorFilter: const ColorFilter.mode(
+                                Colors.white,
+                                BlendMode.srcIn,
+                              ),
+                            ),
+                          ),
+                        ),
+                        
+                        const SizedBox(height: 24),
+                        
+                        // ✅ Bilgi (telefon veya kullanıcı adı)
+                        Text(
+                          widget.peerValue,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: GameColors.interactiveLight,
+                            fontSize: 28,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
               ),
             ),
 
-            // ✅ LONG PRESS PROGRESS (hidden, sayfada hiçbir yer almaz)
+            // Uzun basma ilerlemesi
             if (_longPressActive)
               Positioned.fill(
-                child: Center(
-                  child: SizedBox(
-                    width: 80,
-                    height: 80,
-                    child: CircularProgressIndicator(
-                      value: 0.0,
-                      backgroundColor: Colors.white.withOpacity(0.1),
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        Colors.white.withOpacity(0.8),
+                child: IgnorePointer(
+                  child: Center(
+                    child: AnimatedBuilder(
+                      animation: _progressController,
+                      builder: (context, _) => SizedBox(
+                        width: 80,
+                        height: 80,
+                        child: CircularProgressIndicator(
+                          value: _progressController.value,
+                          backgroundColor: GameColors.purple.withValues(alpha: 0.2),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            GameColors.purple.withValues(alpha: 0.8),
+                          ),
+                          strokeWidth: 5,
+                        ),
                       ),
-                      strokeWidth: 5,
                     ),
                   ),
                 ),

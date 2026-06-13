@@ -36,6 +36,8 @@ class P2pCodec {
           return ShareResponseMessage.fromJson(json);
         case 'error':
           return ErrorMessage.fromJson(json);
+        case 'retry_intent':
+          return RetryIntentMessage.fromJson(json);
         default:
           throw Exception('Unknown message type: $type');
       }

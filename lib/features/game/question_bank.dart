@@ -55,6 +55,13 @@ final class ManifestQuestionBank implements QuestionProvider {
     _i = 0;
   }
 
+  /// Mevcut _byId map'ini kullanarak yeni seed ile sıralamayı değiştir (JSON reload olmadan)
+  ManifestQuestionBank reorderWithSeed(int seed) {
+    final baseOrder = _byId.keys.toList()..sort();
+    final seededOrder = _seededPermutation(baseOrder, seed);
+    return ManifestQuestionBank._(seededOrder, _byId);
+  }
+
   static Future<ManifestQuestionBank> loadFromAsset(
     String assetPath, {
     int? seed,

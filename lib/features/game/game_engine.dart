@@ -6,8 +6,21 @@ import 'dart:math' as math;
 
 import 'game_state.dart';
 import 'models.dart';
-import 'question_bank.dart'; // ✅ FIX: Import QuestionProvider and QuestionPair from question_bank
+import 'question_bank.dart';
 import 'lazy_question_provider.dart';
+
+/// ✅ PERFORMANCE: Debug logging control
+/// Set to false in production for better performance
+const bool _kEngineDebug = false;
+const bool _kEngineVerbose = false; // Extra verbose logs (tick, every state change)
+
+void _log(String msg) {
+  if (_kEngineDebug) print('ENGINE: $msg');
+}
+
+void _logVerbose(String msg) {
+  if (_kEngineVerbose) print('ENGINE: $msg');
+}
 
 abstract class GameTransport {
   Future<void> send(P2pMessage msg);
@@ -32,6 +45,7 @@ final class GameEngine {
   final QuestionProvider? questions; // ✅ NEW: For question asset embedding
 
   String? _peerId;
+  String? _peerActualDeviceId; // ✅ FIX: Peer's actual device ID (from leaderId in messages)
   int _nowMs = 0;
   int? _shuffleSeed; // ✅ NEW: Seed for question shuffling
 
@@ -52,6 +66,25 @@ final class GameEngine {
   
   // Track finalized rounds to prevent duplicate counting
   final Set<int> _finalizedRounds = {};
+  
+  // ✅ NEW: Retry intent tracking
+  bool _localRetryIntent = false;
+  bool _peerRetryIntent = false;
+  
+  // ✅ FIX: Track if we deferred leadership to peer (for restart conflict resolution)
+  bool _deferredToRemoteLeadership = false;
+  
+  /// ✅ NEW: Check if local player has sent retry intent
+  bool get localRetryIntent => _localRetryIntent;
+  
+  /// ✅ NEW: Check if peer has sent retry intent  
+  bool get peerRetryIntent => _peerRetryIntent;
+  
+  /// ✅ SIMPLIFIED: Effective leader check
+  /// Just use the original isLeader flag from pairing, adjusted for any conflicts
+  bool get _effectiveLeader {
+    return isLeader && !_deferredToRemoteLeadership;
+  }
 
   GameEngine({
     required this.transport,
@@ -63,14 +96,31 @@ final class GameEngine {
   });
 
   Future<void> onPeerConnected({required String peerId}) async {
-    print("ENGINE: onPeerConnected called, peerId=$peerId, isLeader=$isLeader, externalRoundControl=$externalRoundControl");
+    _log(" onPeerConnected called, peerId=$peerId, isLeader=$isLeader, externalRoundControl=$externalRoundControl");
     _peerId = peerId;
-    _finalizedRounds.clear(); // Clear finalized rounds for new game
+    
+    // ✅ FIX: Reset ALL game state for new connection
+    _finalizedRounds.clear();
+    _nextRid = 1;
+    _nextQid = 1;
+    _localRetryIntent = false;
+    _peerRetryIntent = false;
+    _peerSimilarity = null;
+    _peerDifference = null;
+    
+    // Reset game state to initial values
+    _setState(const GameState.initial().copyWith(
+      phase: GamePhase.pairing,
+      similarity: 0,
+      difference: 0,
+      clearCurrentRound: true,
+      clearLastErrorCode: true,
+    ));
     
     // ✅ Leader: Generate random seed
     if (isLeader) {
       _shuffleSeed = math.Random().nextInt(1000000);
-      print("ENGINE: 🎲 Generated shuffle seed: $_shuffleSeed");
+      _log(" 🎲 Generated shuffle seed: $_shuffleSeed");
     }
     
     // ✅ FIXED: Reshuffle questions with seed FIRST and AWAIT completion
@@ -85,40 +135,44 @@ final class GameEngine {
         sid: sessionId,
         seed: _shuffleSeed,
         startAtMs: startAtMs, // ✅ NEW: Schedule synchronized start
+        leaderId: localDeviceId, // ✅ NEW: Send our actual device ID
       );
       transport.send(msg);
-      print("ENGINE: 📤 Sent GameStartMessage with seed=$_shuffleSeed, startAtMs=$startAtMs");
+      _log(" 📤 Sent GameStartMessage with seed=$_shuffleSeed, startAtMs=$startAtMs, leaderId=$localDeviceId");
     }
     
-    _setState(_state.copyWith(phase: GamePhase.pairing, clearLastErrorCode: true));
+    // Note: State already set above with similarity=0, difference=0
     if (isLeader && !externalRoundControl) {
-      print("ENGINE: ⏰ Deferring first round start (waiting for UI to be ready)");
+      _log(" ⏰ Deferring first round start (waiting for UI to be ready)");
       // ✅ NEW: Defer first round until UI is ready (animated transition complete)
       // Wait 500ms to let UI transition animations settle, then start
       Future.delayed(const Duration(milliseconds: 500), () {
-        if (_peerId != null) {
-          print("ENGINE: 🚀 NOW calling _maybeStartFirstRound");
+        // ✅ FIX: Check _effectiveLeader in case we deferred during the delay
+        if (_peerId != null && _effectiveLeader) {
+          _log(" 🚀 NOW calling _maybeStartFirstRound");
           _maybeStartFirstRound();
+        } else if (_deferredToRemoteLeadership) {
+          _log(" ⏭️ Skipping _maybeStartFirstRound - deferred to remote leadership");
         }
       });
     } else {
-      print("ENGINE: Skipping _maybeStartFirstRound - isLeader=$isLeader, externalRoundControl=$externalRoundControl");
+      _log(" Skipping _maybeStartFirstRound - isLeader=$isLeader, externalRoundControl=$externalRoundControl");
     }
   }
   
   /// ✅ FIXED: Reshuffle with seed (async version)
   Future<void> _reshuffleWithSeedAsync() async {
     if (_shuffleSeed == null) {
-      print("ENGINE: ⚠️ No shuffle seed, using default order");
+      _log(" ⚠️ No shuffle seed, using default order");
       return;
     }
     
     if (questions is LazyQuestionProvider) {
       try {
         await (questions as LazyQuestionProvider).reshuffleForSession(sessionId, _shuffleSeed!);
-        print("ENGINE: ✅ Questions reshuffled with seed=$_shuffleSeed");
+        _log(" ✅ Questions reshuffled with seed=$_shuffleSeed");
       } catch (e) {
-        print("ENGINE: ❌ ERROR reshuffling questions: $e");
+        _log(" ❌ ERROR reshuffling questions: $e");
       }
     }
   }
@@ -127,6 +181,161 @@ final class GameEngine {
     _peerId = null;
     _cancelPendingStartTimer();
     _resetToPairing();
+  }
+
+  /// ✅ NEW: Restart game with the same peer (for retry after failure)
+  Future<void> restartGame() async {
+    if (_peerId == null) {
+      _log(" ⚠️ Cannot restart - no peer connected");
+      return;
+    }
+    
+    // ✅ SIMPLIFIED: Just use the original isLeader flag from pairing
+    // Don't use _effectiveLeader - it has complex logic that can cause both devices to think they're leader
+    final shouldBeLeader = isLeader && !_deferredToRemoteLeadership;
+    
+    _log(" 🔄 ═══════════════════════════════════════");
+    _log(" 🔄 RESTARTING GAME WITH SAME PEER");
+    _log(" 🔄 Keeping established role: shouldBeLeader=$shouldBeLeader");
+    _log(" 🔄 (isLeader=$isLeader, _deferredToRemoteLeadership=$_deferredToRemoteLeadership)");
+    _log(" 🔄 ═══════════════════════════════════════");
+    
+    // Reset game state
+    _finalizedRounds.clear();
+    _cancelPendingStartTimer();
+    _nextRid = 1;
+    _nextQid = 1;
+    _nowMs = 0; // ✅ FIX: Reset time tracking (will be updated by ticker)
+    
+    // ✅ Reset retry flags (but NOT leadership - already established!)
+    _localRetryIntent = false;
+    _peerRetryIntent = false;
+    
+    // ✅ FIX: Reset peer game result from previous game
+    _log(" 🔄 Resetting peer game result (was: sim=$_peerSimilarity, diff=$_peerDifference)");
+    _peerSimilarity = null;
+    _peerDifference = null;
+    
+    // ✅ NOTE: NOT resetting _deferredToRemoteLeadership - keep established roles!
+    
+    // Generate new shuffle seed (leader only)
+    if (shouldBeLeader) {
+      _shuffleSeed = math.Random().nextInt(1000000);
+      _log(" 🎲 New shuffle seed: $_shuffleSeed");
+    }
+    
+    // Reshuffle questions
+    await _reshuffleWithSeedAsync();
+    
+    // Reset state to playing
+    _setState(const GameState.initial().copyWith(
+      phase: GamePhase.pairing,
+      similarity: 0,
+      difference: 0,
+      clearCurrentRound: true,
+      clearLastErrorCode: true,
+    ));
+    
+    // ✅ FIX: Only the deterministic leader sends GameStartMessage
+    if (shouldBeLeader) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final startAtMs = now + 600;
+      final msg = GameStartMessage(
+        v: protocolVersion,
+        sid: sessionId,
+        seed: _shuffleSeed,
+        startAtMs: startAtMs,
+        leaderId: localDeviceId, // ✅ NEW: Send our actual device ID
+      );
+      transport.send(msg);
+      _log(" 📤 Sent new GameStartMessage for restart (seed=$_shuffleSeed, leaderId=$localDeviceId)");
+      
+      // Start first round after delay
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (_peerId != null && _effectiveLeader) {
+          _log(" 🚀 Starting first round (restart)");
+          _maybeStartFirstRound();
+        } else {
+          _log(" ⚠️ Cannot start round - peerId=$_peerId, _effectiveLeader=$_effectiveLeader");
+        }
+      });
+    } else {
+      // ✅ Follower: wait for GameStartMessage from leader
+      _log(" 👥 Follower waiting for GameStartMessage from leader (we have larger ID)");
+    }
+  }
+
+  /// ✅ NEW: Send retry intent (called when player presses retry button)
+  void sendRetryIntent() {
+    if (_peerId == null) {
+      _log(" ⚠️ Cannot send retry intent - no peer connected");
+      return;
+    }
+    
+    if (_localRetryIntent) {
+      _log(" ⚠️ Retry intent already sent");
+      return;
+    }
+    
+    _log(" 🔄 ═══════════════════════════════════════");
+    _log(" 🔄 SENDING RETRY INTENT");
+    _log(" 🔄 ═══════════════════════════════════════");
+    
+    _localRetryIntent = true;
+
+    // Retry intent mesajını gönder. BLE kopuksa send() exception fırlatabilir;
+    // unhandled future'dan kaçınmak için hata sessizce loglanıyor.
+    transport.send(RetryIntentMessage(sid: sessionId))
+        .catchError((e) => _log('[ENGINE] ⚠️ Retry intent gönderilemedi: $e'));
+
+    // Check if both players want to retry
+    _checkBothRetryIntent();
+  }
+  
+  /// ✅ NEW: Handle incoming retry intent from peer
+  void _onPeerRetryIntent() {
+    _log(" 🔄 ═══════════════════════════════════════");
+    _log(" 🔄 RECEIVED PEER RETRY INTENT");
+    _log(" 🔄 ═══════════════════════════════════════");
+    
+    _peerRetryIntent = true;
+    
+    // Notify UI that peer wants to retry
+    _states.add(_state); // Trigger UI update
+    
+    // Check if both players want to retry
+    _checkBothRetryIntent();
+  }
+  
+  /// ✅ NEW: Check if both players want to retry and restart game
+  void _checkBothRetryIntent() {
+    _log(" 🔍 Checking retry intent - local=$_localRetryIntent, peer=$_peerRetryIntent");
+    
+    if (_localRetryIntent && _peerRetryIntent) {
+      _log(" ✅ ═══════════════════════════════════════");
+      _log(" ✅ BOTH PLAYERS WANT TO RETRY - STARTING COUNTDOWN!");
+      _log(" ✅ ═══════════════════════════════════════");
+      
+      // ✅ NEW: Set restarting phase to show green arrow on both phones
+      _setState(_state.copyWith(phase: GamePhase.restarting));
+      
+      // ✅ Wait 500ms for the "game starting" animation, then restart
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (_peerId == null) {
+          _log(" ⚠️ Peer disconnected during restart countdown");
+          return;
+        }
+        
+        _log(" 🚀 Countdown complete - restarting game!");
+        
+        // Reset retry flags
+        _localRetryIntent = false;
+        _peerRetryIntent = false;
+        
+        // Restart the game
+        restartGame();
+      });
+    }
   }
 
   void onTick(int nowEpochMs) {
@@ -201,15 +410,29 @@ final class GameEngine {
       
       // ✅ FIX: When peer sends game_result, game is OVER - transition to terminal state
       // The peer has already determined the game outcome, so we must match it
+      
+      // ✅ SAFETY: Check if game has enough rounds before accepting terminal state
+      final totalRounds = (_peerSimilarity ?? 0) + (_peerDifference ?? 0);
+      final localTotalRounds = _state.similarity + _state.difference;
+      _log("🎮 Peer game result - totalRounds=$totalRounds (peer), localTotalRounds=$localTotalRounds (local)");
+      
       if (_peerDifference != null && _peerDifference! >= 5) {
-        print("[ENGINE] 🎮 Peer reached 5 differences - transitioning to terminalFail");
+        if (totalRounds < 5) {
+          _log("[ENGINE] ⚠️ SUSPICIOUS: Peer claims 5 differences but total rounds=$totalRounds (ignoring)");
+          return;
+        }
+        _log("[ENGINE] 🎮 Peer reached 5 differences - transitioning to terminalFail");
         _setState(_state.copyWith(
           phase: GamePhase.terminalFail,
           difference: _peerDifference!, // Sync with peer's count
           similarity: _peerSimilarity ?? _state.similarity,
         ));
       } else if (_peerSimilarity != null && _peerSimilarity! >= 5) {
-        print("[ENGINE] 🎮 Peer reached 5 similarities - transitioning to terminalSuccess");
+        if (totalRounds < 5) {
+          _log("[ENGINE] ⚠️ SUSPICIOUS: Peer claims 5 similarities but total rounds=$totalRounds (ignoring)");
+          return;
+        }
+        _log("[ENGINE] 🎮 Peer reached 5 similarities - transitioning to terminalSuccess");
         _setState(_state.copyWith(
           phase: GamePhase.terminalSuccess,
           similarity: _peerSimilarity!, // Sync with peer's count
@@ -222,17 +445,17 @@ final class GameEngine {
   }
 
   void onP2pMessage(P2pMessage msg) {
-    dev.log("ENGINE: Received message: ${msg.runtimeType}");
+    _log(" 📬 Received message: ${msg.runtimeType}");
     
     // ✅ SADE PAIRING: Switch exhaustiveness garantisi - tüm mesaj tipleri için case'ler
     // SensorSnapshotMessage ve PairRejectMessage pairing için kritik (engine'de ignore edilir)
     switch (msg) {
       // Oyun mesajları
       case GameStartMessage():
-        dev.log("ENGINE: Processing GameStartMessage (startAtMs=${msg.startAtMs})");
+        _log(" 🎮 Processing GameStartMessage (startAtMs=${msg.startAtMs}, seed=${msg.seed})");
         _onGameStart(msg);
       case RoundStartMessage():
-        dev.log("ENGINE: Processing RoundStartMessage (rid=${msg.rid}, qid=${msg.qid})");
+        _log(" 🎯 Processing RoundStartMessage (rid=${msg.rid}, qid=${msg.qid})");
         _onRoundStart(msg);
       case SelectionMessage():
         dev.log("ENGINE: Processing SelectionMessage");
@@ -242,23 +465,23 @@ final class GameEngine {
         return;
       case ShareOfferMessage():
         // ✅ NEW: Handle game result and share info messages
-        print("[ENGINE] 📨 ═══════════════════════════════════════");
-        print("[ENGINE] 📨 ShareOfferMessage ALINDı!");
-        print("[ENGINE] 📨 ═══════════════════════════════════════");
-        print("[ENGINE]    - Tür (kind): ${msg.kind}");
-        print("[ENGINE]    - Değer: ${msg.value}");
-        print("[ENGINE]    - Extra: ${msg.extra}");
+        _log("[ENGINE] 📨 ═══════════════════════════════════════");
+        _log("[ENGINE] 📨 ShareOfferMessage ALINDı!");
+        _log("[ENGINE] 📨 ═══════════════════════════════════════");
+        _log("[ENGINE]    - Tür (kind): ${msg.kind}");
+        _log("[ENGINE]    - Değer: ${msg.value}");
+        _log("[ENGINE]    - Extra: ${msg.extra}");
         
         if (msg.kind == 'game_result') {
-          print("[ENGINE] 🎮 game_result olarak işleniyor...");
+          _log("[ENGINE] 🎮 game_result olarak işleniyor...");
           dev.log("ENGINE: Received game_result from peer: ${msg.value}");
           _handlePeerGameResult(msg.value);
         } else if (msg.kind == 'share_info') {
-          print("[ENGINE] 👤 share_info olarak işleniyor...");
+          _log("[ENGINE] 👤 share_info olarak işleniyor...");
           dev.log("ENGINE: Received share_info from peer: ${msg.value}");
           _onPeerShareOffer(msg);
         } else {
-          print("[ENGINE] ⚠️ Bilinmeyen kind: ${msg.kind}");
+          _log("[ENGINE] ⚠️ Bilinmeyen kind: ${msg.kind}");
         }
         return;
       case ShareResponseMessage():
@@ -284,18 +507,20 @@ final class GameEngine {
       case PairAckMessage():
         // Pair ack is for pairing negotiation, not game engine
         return;
+      case RetryIntentMessage():
+        // ✅ NEW: Handle retry intent from peer
+        _onPeerRetryIntent();
+        return;
     }
   }
 
   // Game start synchronization state
   Timer? _gameStartTimer;
-  int? _pendingGameStartAtMs;
 
   /// Cancel pending game start timer and clear state
   void _cancelPendingStartTimer() {
     _gameStartTimer?.cancel();
     _gameStartTimer = null;
-    _pendingGameStartAtMs = null;
     // Clear state.pendingGameStartAtMs
     if (_state.pendingGameStartAtMs != null) {
       _setState(_state.copyWith(clearPendingGameStartAtMs: true));
@@ -303,35 +528,63 @@ final class GameEngine {
   }
 
   void _maybeStartFirstRound() {
-    print("ENGINE: _maybeStartFirstRound called - phase=${_state.phase}, peerId=$_peerId, nowMs=$_nowMs");
+    // ✅ FIX: Use real current time, not potentially stale _nowMs
+    final realNow = DateTime.now().millisecondsSinceEpoch;
+    _log(" _maybeStartFirstRound called - phase=${_state.phase}, peerId=$_peerId");
+    _log("    _nowMs=$_nowMs, realNow=$realNow");
+    _log(" 🎮 INITIAL GAME STATE: similarity=${_state.similarity}, difference=${_state.difference}");
+    
     if (_state.phase == GamePhase.playing) {
-      print("ENGINE: _maybeStartFirstRound skipped - already playing");
+      _log(" _maybeStartFirstRound skipped - already playing");
       return;
     }
     if (_peerId == null) {
-      print("ENGINE: _maybeStartFirstRound skipped - peerId is null");
+      _log(" _maybeStartFirstRound skipped - peerId is null");
       return;
     }
-    print("ENGINE: _maybeStartFirstRound starting round");
+    
+    // ✅ FIX: Update _nowMs to real time if it's 0 or stale
+    if (_nowMs == 0 || _nowMs < realNow - 10000) {
+      _log(" ⚠️ _nowMs was stale ($_nowMs), updating to realNow ($realNow)");
+      _nowMs = realNow;
+    }
+    
+    _log(" _maybeStartFirstRound starting round with now=$_nowMs");
     _startLeaderRound(now: _nowMs);
   }
 
   void _onGameStart(GameStartMessage msg) {
-    dev.log("ENGINE: _onGameStart called, startAtMs=${msg.startAtMs}");
+    _log(" 🎮 _onGameStart called, startAtMs=${msg.startAtMs}, seed=${msg.seed}, leaderId=${msg.leaderId}");
+    _log("    isLeader=$isLeader, currentPhase=${_state.phase}");
     
-    // ✅ FIXED: Peer receives seed from leader and reshuffles BEFORE starting game
-    if (msg.seed != null && !isLeader) {
-      _shuffleSeed = msg.seed;
-      print("ENGINE: 📥 Received shuffle seed from leader: $_shuffleSeed");
-      // Reshuffle and then continue with game start after reshuffle completes
-      _reshuffleWithSeedAsync().then((_) {
-        print("ENGINE: ✅ Peer questions reshuffled, continuing with game start");
-        _proceedWithGameStart(msg);
-      }).catchError((e) {
-        print("ENGINE: ❌ Reshuffle failed: $e, continuing anyway");
-        _proceedWithGameStart(msg);
-      });
-      return; // Wait for reshuffle
+    // ✅ FIX: Store peer's actual device ID for leadership comparison
+    if (msg.leaderId != null && msg.leaderId != localDeviceId) {
+      _peerActualDeviceId = msg.leaderId;
+      _log(" 📥 Stored peer's actual device ID from GameStartMessage: $_peerActualDeviceId");
+    }
+    
+    // ✅ FIX: Accept seed from peer even if we think we're leader (restart conflict resolution)
+    // In early game or restart scenario, accept the seed if provided
+    final isEarlyGame = _state.phase == GamePhase.pairing || 
+                        _state.currentRound == null || 
+                        _state.currentRound!.rid <= 1;
+    
+    if (msg.seed != null) {
+      if (!isLeader || isEarlyGame) {
+        _shuffleSeed = msg.seed;
+        _log(" 📥 Received shuffle seed: $_shuffleSeed (early game or follower)");
+        // Reshuffle and then continue with game start after reshuffle completes
+        _reshuffleWithSeedAsync().then((_) {
+          _log(" ✅ Questions reshuffled, continuing with game start");
+          _proceedWithGameStart(msg);
+        }).catchError((e) {
+          _log(" ❌ Reshuffle failed: $e, continuing anyway");
+          _proceedWithGameStart(msg);
+        });
+        return; // Wait for reshuffle
+      } else {
+        _log(" ⚠️ Leader ignoring peer seed (late game)");
+      }
     }
     
     // Leader or no seed: proceed immediately
@@ -346,12 +599,11 @@ final class GameEngine {
       final delayMs = (msg.startAtMs! - now).clamp(0, double.infinity).toInt();
       
       // ✅ [SYNC] log: GameStart alınınca
-      print("[SYNC] recv startAtMs=${msg.startAtMs}, now=$now, delay=$delayMs, leader=$isLeader, peerId=$_peerId");
+      _logVerbose("[SYNC] recv startAtMs=${msg.startAtMs}, now=$now, delay=$delayMs, leader=$isLeader, peerId=$_peerId");
       dev.log("[SYNC] recv startAtMs=${msg.startAtMs}, now=$now, delay=$delayMs, leader=$isLeader, peerId=$_peerId");
       
       if (delayMs > 0) {
         dev.log("ENGINE: Scheduling game start in ${delayMs}ms (startAtMs=${msg.startAtMs}, now=$now)");
-        _pendingGameStartAtMs = msg.startAtMs;
         // Update state to show pending start (for UI ring progress)
         _setState(_state.copyWith(pendingGameStartAtMs: msg.startAtMs));
         _gameStartTimer?.cancel();
@@ -361,33 +613,35 @@ final class GameEngine {
           final driftMs = fireNow - plannedStartAtMs;
           
           // ✅ [SYNC] log: Timer tetiklenince
-          print("[SYNC] FIRE now=$fireNow, plannedStartAtMs=$plannedStartAtMs, driftMs=$driftMs");
+          _logVerbose("[SYNC] FIRE now=$fireNow, plannedStartAtMs=$plannedStartAtMs, driftMs=$driftMs");
           dev.log("[SYNC] FIRE now=$fireNow, plannedStartAtMs=$plannedStartAtMs, driftMs=$driftMs");
           
           // ✅ [SYNC] WARNING: driftMs mutlak değeri > 80ms ise
           if (driftMs.abs() > 80) {
-            print("[SYNC] WARNING drift=${driftMs}ms (planned=$plannedStartAtMs, actual=$fireNow)");
+            _logVerbose("[SYNC] WARNING drift=${driftMs}ms (planned=$plannedStartAtMs, actual=$fireNow)");
             dev.log("[SYNC] WARNING drift=${driftMs}ms (planned=$plannedStartAtMs, actual=$fireNow)");
           }
           
           dev.log("ENGINE: Game start delay completed, starting first round");
-          _pendingGameStartAtMs = null;
           _setState(_state.copyWith(clearPendingGameStartAtMs: true));
-          if (_peerId != null) {
-            dev.log("ENGINE: Starting first round after delay (fireNow=$fireNow)");
+          // ✅ FIX: Only leader starts rounds - follower waits for RoundStartMessage
+          if (_effectiveLeader && _peerId != null) {
+            dev.log("ENGINE: Starting first round after delay as LEADER (fireNow=$fireNow)");
             _startLeaderRound(now: fireNow);
+          } else {
+            dev.log("ENGINE: Waiting for RoundStartMessage from leader (we are follower)");
           }
         });
         return; // Delay start, don't start immediately
       } else {
         dev.log("ENGINE: startAtMs is in the past or now, starting immediately");
-        _pendingGameStartAtMs = null;
         _setState(_state.copyWith(clearPendingGameStartAtMs: true));
       }
     }
     
     // No startAtMs or delay already passed: start immediately (LEADER only)
-    if (isLeader && _peerId != null) {
+    // ✅ FIX: Use _effectiveLeader to account for deferred leadership
+    if (_effectiveLeader && _peerId != null) {
       final now = DateTime.now().millisecondsSinceEpoch;
       dev.log("ENGINE: Starting first round immediately (now=$now, _nowMs=$_nowMs)");
       _startLeaderRound(now: now);
@@ -438,41 +692,52 @@ final class GameEngine {
     );
   }
 
+  /// ✅ REFACTORED: Leadership conflict resolution helper
+  /// Returns true if we should defer to peer, false if we keep leadership, null if no conflict
+  bool? _resolveLeadershipConflict(String? peerLeaderId) {
+    if (!isLeader || peerLeaderId == localDeviceId) return null; // No conflict
+    
+    final isEarlyGame = _state.phase == GamePhase.pairing || 
+                        _state.currentRound == null || 
+                        _state.currentRound!.rid <= 1;
+    
+    if (!isEarlyGame) {
+      _log(" ⚠️ Late game conflict - keeping current leadership");
+      return null; // Don't change leadership in late game
+    }
+    
+    // Deterministic: smaller device ID wins
+    final theyWin = (peerLeaderId ?? '').compareTo(localDeviceId) < 0;
+    _log(" ⚠️ Leader conflict: ${theyWin ? 'deferring to peer' : 'keeping leadership'}");
+    return theyWin;
+  }
+
   void _onRoundStart(RoundStartMessage msg) {
-    dev.log("ENGINE: _onRoundStart called");
-    dev.log("ENGINE: isLeader=$isLeader, msg.sid=${msg.sid}, sessionId=$sessionId");
+    _log(" 📨 RoundStart rid=${msg.rid}, qid=${msg.qid}");
     
-    if (isLeader && msg.leaderId != localDeviceId) {
-      dev.log("ENGINE: Leader ignoring RoundStartMessage from another leaderId=${msg.leaderId}");
+    // Store peer's device ID for future comparisons
+    if (msg.leaderId != localDeviceId) {
+      _peerActualDeviceId = msg.leaderId;
+    }
+    
+    // Resolve any leadership conflict
+    final shouldDefer = _resolveLeadershipConflict(msg.leaderId);
+    if (shouldDefer == true) {
+      _deferredToRemoteLeadership = true;
+    } else if (shouldDefer == false) {
+      return; // We keep leadership, ignore their round message
+    } else if (isLeader && msg.leaderId != localDeviceId) {
+      // Late game conflict - ignore
       return;
     }
-    if (isLeader) {
-      dev.log("ENGINE: Leader processing local RoundStartMessage");
-    }
     
-    if (msg.sid != sessionId) {
-      if (isLeader) {
-        dev.log("ENGINE: Session ID mismatch, ignoring");
-        return;
-      }
-      dev.log("ENGINE: Session ID mismatch, accepting for follower");
-    }
+    // Validate message
+    if (_peerId == null) return;
     
-    if (_peerId == null) {
-      dev.log("ENGINE: No peer connected, ignoring");
-      return;
-    }
-
     final cur = _state.currentRound;
-    if (cur != null && msg.rid < cur.rid) {
-      dev.log("ENGINE: Old rid (${msg.rid} < ${cur.rid}), ignoring");
-      return; // drop old rid
-    }
+    if (cur != null && msg.rid < cur.rid) return; // Old round
 
-    dev.log("ENGINE: Creating new round: rid=${msg.rid}, qid=${msg.qid}, deadline=${msg.deadlineMs}");
-    
-    // ✅ NEW: Log embedded assets
-    dev.log("ENGINE: Question assets - top=${msg.topAsset}, bottom=${msg.bottomAsset}");
+    _log(" 🆕 ROUND ${msg.rid} START (qid=${msg.qid}, score=${_state.similarity}-${_state.difference})");
 
     final round = CurrentRound(
       rid: msg.rid,
@@ -495,34 +760,34 @@ final class GameEngine {
   }
 
   void _onLocalTap(Choice c) {
-    print('[ENGINE] 🎯 _onLocalTap called: choice=$c, phase=${_state.phase}, rid=${_state.currentRound?.rid}');
+    _log('[ENGINE] 🎯 _onLocalTap called: choice=$c, phase=${_state.phase}, rid=${_state.currentRound?.rid}');
     
     if (_state.phase != GamePhase.playing) {
-      print('[ENGINE] ❌ REJECTED: phase != playing');
+      _log('[ENGINE] ❌ REJECTED: phase != playing');
       return;
     }
     final r = _state.currentRound;
     if (r == null) {
-      print('[ENGINE] ❌ REJECTED: currentRound is null');
+      _log('[ENGINE] ❌ REJECTED: currentRound is null');
       return;
     }
     if (r.localFinal) {
-      print('[ENGINE] ❌ REJECTED: localFinal=true (already selected in round ${r.rid})');
+      _log('[ENGINE] ❌ REJECTED: localFinal=true (already selected in round ${r.rid})');
       return;
     }
     if (_nowMs == 0) {
-      print('[ENGINE] ❌ REJECTED: _nowMs is 0');
+      _log('[ENGINE] ❌ REJECTED: _nowMs is 0');
       return;
     }
 
     // If already past deadline, ignore taps (deadline finalize will handle none).
     if (_nowMs > r.deadlineMs) {
-      print('[ENGINE] ❌ REJECTED: past deadline');
+      _log('[ENGINE] ❌ REJECTED: past deadline');
       return;
     }
     
-    print('[ENGINE] ✅ TAP ACCEPTED: rid=${r.rid}, choice=$c');
-    print('[ENGINE] 📊 Current state BEFORE local tap: localFinal=${r.localFinal}, peerFinal=${r.peerFinal}, peerChoice=${r.peerChoice}');
+    _log('[ENGINE] ✅ TAP ACCEPTED: rid=${r.rid}, choice=$c');
+    _log('[ENGINE] 📊 Current state BEFORE local tap: localFinal=${r.localFinal}, peerFinal=${r.peerFinal}, peerChoice=${r.peerChoice}');
 
     final nextRev = r.localRev + 1;
     final rr = r.copyWith(
@@ -532,7 +797,7 @@ final class GameEngine {
       graceDeadlineMs: r.deadlineMs + graceWindowMs,
     );
     
-    print('[ENGINE] 📊 State AFTER local tap: localFinal=${rr.localFinal}, peerFinal=${rr.peerFinal}, peerChoice=${rr.peerChoice}');
+    _log('[ENGINE] 📊 State AFTER local tap: localFinal=${rr.localFinal}, peerFinal=${rr.peerFinal}, peerChoice=${rr.peerChoice}');
     _setState(_state.copyWith(currentRound: rr));
 
     transport.send(
@@ -576,52 +841,53 @@ final class GameEngine {
   }
 
   void _onPeerSelection(SelectionMessage msg) {
-    print('[ENGINE] 📨 _onPeerSelection: rid=${msg.rid}, choice=${msg.choice}, isFinal=${msg.isFinal}');
+    _log('[ENGINE] 📨 _onPeerSelection: rid=${msg.rid}, choice=${msg.choice}, isFinal=${msg.isFinal}');
     
     if (msg.sid != sessionId) {
       // Transport session ids are device-local; accept selection for current round.
       dev.log("ENGINE: Selection sid mismatch (sessionId=$sessionId, msg.sid=${msg.sid}) - accepting");
     }
     if (_state.phase != GamePhase.playing) {
-      print('[ENGINE] ❌ REJECTED: phase=${_state.phase} (not playing)');
+      _log('[ENGINE] ❌ REJECTED: phase=${_state.phase} (not playing)');
       return;
     }
     final r = _state.currentRound;
     if (r == null) {
-      print('[ENGINE] ❌ REJECTED: currentRound is null');
+      _log('[ENGINE] ❌ REJECTED: currentRound is null');
       return;
     }
 
     // Out-of-order: old rid is dropped.
     if (msg.rid < r.rid) {
-      print('[ENGINE] ❌ REJECTED: msg.rid=${msg.rid} < current rid=${r.rid}');
+      _log('[ENGINE] ❌ REJECTED: msg.rid=${msg.rid} < current rid=${r.rid}');
       return;
     }
     if (msg.rid > r.rid) {
-      print('[ENGINE] ❌ REJECTED: msg.rid=${msg.rid} > current rid=${r.rid} (unexpected)');
+      _log('[ENGINE] ❌ REJECTED: msg.rid=${msg.rid} > current rid=${r.rid} (unexpected)');
       return;
     }
 
     // Deadline validity.
-    if (msg.madeAtMs > r.deadlineMs) {
-      print('[ENGINE] ❌ REJECTED: madeAtMs=${msg.madeAtMs} > deadline=${r.deadlineMs}');
+    // 100ms tolerans: BLE gecikme + saat senkronizasyon sapmasını karşılar
+    if (msg.madeAtMs > r.deadlineMs + 100) {
+      _log('[ENGINE] ❌ REJECTED: madeAtMs=${msg.madeAtMs} > deadline=${r.deadlineMs} (+100ms tolerans)');
       return;
     }
 
     // Same rid: accept only highest rev.
     if (msg.rev < r.peerRev) {
-      print('[ENGINE] ❌ REJECTED: msg.rev=${msg.rev} < peerRev=${r.peerRev}');
+      _log('[ENGINE] ❌ REJECTED: msg.rev=${msg.rev} < peerRev=${r.peerRev}');
       return;
     }
 
     final c = choiceFromWire(msg.choice);
     if (c == null) {
-      print('[ENGINE] ❌ REJECTED: invalid choice=${msg.choice}');
+      _log('[ENGINE] ❌ REJECTED: invalid choice=${msg.choice}');
       return;
     }
 
-    print('[ENGINE] ✅ PEER SELECTION ACCEPTED: rid=${msg.rid}, choice=$c, isFinal=${msg.isFinal}');
-    print('[ENGINE] 📊 BEFORE: localFinal=${r.localFinal}, peerFinal=${r.peerFinal}');
+    _log('[ENGINE] ✅ PEER SELECTION ACCEPTED: rid=${msg.rid}, choice=$c, isFinal=${msg.isFinal}');
+    _log('[ENGINE] 📊 BEFORE: localFinal=${r.localFinal}, peerFinal=${r.peerFinal}');
 
     final rr = r.copyWith(
       peerChoice: c,
@@ -629,17 +895,17 @@ final class GameEngine {
       peerFinal: msg.isFinal,
     );
     
-    print('[ENGINE] 📊 AFTER: localFinal=${rr.localFinal}, peerFinal=${rr.peerFinal}');
+    _log('[ENGINE] 📊 AFTER: localFinal=${rr.localFinal}, peerFinal=${rr.peerFinal}');
     
     _setState(_state.copyWith(currentRound: rr));
     _finalizeIfComplete(rr);
   }
 
   void _finalizeIfComplete(CurrentRound r) {
-    print('[ENGINE] 🔍 _finalizeIfComplete: rid=${r.rid}, localFinal=${r.localFinal}, peerFinal=${r.peerFinal}, _nowMs=$_nowMs');
+    _log('[ENGINE] 🔍 _finalizeIfComplete: rid=${r.rid}, localFinal=${r.localFinal}, peerFinal=${r.peerFinal}, _nowMs=$_nowMs');
     
     if (_nowMs == 0) {
-      print('[ENGINE] ⏳ SKIPPED: _nowMs=0 (waiting for first tick)');
+      _log('[ENGINE] ⏳ SKIPPED: _nowMs=0 (waiting for first tick)');
       dev.log("ENGINE: _finalizeIfComplete skipped - _nowMs=0 (waiting for first tick)");
       return;
     }
@@ -648,23 +914,23 @@ final class GameEngine {
     final gracePassed = graceDeadline != null && _nowMs >= graceDeadline;
     final isComplete = r.localFinal && (r.peerFinal || gracePassed);
     
-    print('[ENGINE] 🔍 isComplete check: localFinal=${r.localFinal}, peerFinal=${r.peerFinal}, gracePassed=$gracePassed, graceDeadline=$graceDeadline');
-    print('[ENGINE] 🔍 Result: isComplete=$isComplete');
+    _log('[ENGINE] 🔍 isComplete check: localFinal=${r.localFinal}, peerFinal=${r.peerFinal}, gracePassed=$gracePassed, graceDeadline=$graceDeadline');
+    _log('[ENGINE] 🔍 Result: isComplete=$isComplete');
     
     if (!isComplete) {
-      print('[ENGINE] ⏳ SKIPPED: round not complete yet');
+      _log('[ENGINE] ⏳ SKIPPED: round not complete yet');
       dev.log("ENGINE: _finalizeIfComplete skipped - round not complete yet (local=${r.localFinal}, peer=${r.peerFinal})");
       return;
     }
     
     // Prevent duplicate counting: if this round was already finalized, skip
     if (_finalizedRounds.contains(r.rid)) {
-      print('[ENGINE] ⏭️ SKIPPED: rid=${r.rid} already finalized');
+      _log('[ENGINE] ⏭️ SKIPPED: rid=${r.rid} already finalized');
       dev.log("ENGINE: Round ${r.rid} already finalized, skipping duplicate count");
       return;
     }
     
-    print('[ENGINE] ✅ FINALIZING round ${r.rid}!');
+    _log('[ENGINE] ✅ FINALIZING round ${r.rid}!');
     _finalizedRounds.add(r.rid);
 
     final peerChoice = r.peerFinal ? (r.peerChoice ?? Choice.none) : Choice.none;
@@ -681,15 +947,34 @@ final class GameEngine {
     
     final nextSimilarity = _state.similarity + (isSimilar ? 1 : 0);
     final nextDifference = _state.difference + (isDifferent ? 1 : 0);
+    
+    // ✅ DEBUG: Her round sonucunu detaylı logla
+    _log(" ═══════════════════════════════════════");
+    _log(" 📊 ROUND ${r.rid} COMPLETE");
+    _log("    Question ID: ${r.qid}");
+    _log("    Local choice: $localChoice");
+    _log("    Peer choice: $peerChoice");
+    _log("    Both chose: $bothChose");
+    _log("    Is similar: $isSimilar");
+    _log("    Is different: $isDifferent");
+    _log("    Score BEFORE: ${_state.similarity}-${_state.difference}");
+    _log("    Score AFTER: $nextSimilarity-$nextDifference");
+    _log(" ═══════════════════════════════════════");
+    
     dev.log(
       "ENGINE: Round complete rid=${r.rid} qid=${r.qid} local=$localChoice peer=$peerChoice similar=$isSimilar "
-      "score=${nextSimilarity}-${nextDifference}",
+      "score=$nextSimilarity-$nextDifference",
     );
 
     var nextPhase = _state.phase;
+    final totalRoundsPlayed = nextSimilarity + nextDifference;
+    _log(" 📊 Score update - similarity=$nextSimilarity, difference=$nextDifference, totalRounds=$totalRoundsPlayed");
+    
     if (nextSimilarity == 5) {
+      _log(" 🎉 TERMINAL SUCCESS at round $totalRoundsPlayed");
       nextPhase = GamePhase.terminalSuccess;
     } else if (nextDifference == 5) {
+      _log(" 💔 TERMINAL FAIL at round $totalRoundsPlayed");
       nextPhase = GamePhase.terminalFail;
     } else {
       // Keep both devices in playing between rounds to avoid bouncing to pairing UI.
@@ -701,13 +986,14 @@ final class GameEngine {
       _cancelPendingStartTimer();
       
       // ✅ NEW: Send game result to peer
-      if (isLeader) {
+      // ✅ FIX: Use _effectiveLeader to account for deferred leadership
+      if (_effectiveLeader) {
         transport.send(
           ShareOfferMessage(
             v: protocolVersion,
             sid: sessionId,
             kind: 'game_result',
-            value: '{\"similarity\":$nextSimilarity,\"difference\":$nextDifference}',
+            value: '{"similarity":$nextSimilarity,"difference":$nextDifference}',
           ),
         );
       }
@@ -722,14 +1008,26 @@ final class GameEngine {
       ),
     );
 
-    if (nextPhase == GamePhase.playing && isLeader && !externalRoundControl) {
+    if (nextPhase == GamePhase.playing && _effectiveLeader && !externalRoundControl) {
+      _log('[ENGINE] 🚀 Starting next round as effective leader');
       _startLeaderRound(now: _nowMs);
+    } else if (nextPhase == GamePhase.playing && !_effectiveLeader) {
+      _log('[ENGINE] ⏳ Waiting for peer to start next round (_effectiveLeader=false)');
     }
   }
 
   void _resetToPairing() {
     _finalizedRounds.clear();
     _cancelPendingStartTimer();
+    
+    // ✅ FIX: Reset peer game result and retry flags
+    _peerSimilarity = null;
+    _peerDifference = null;
+    _localRetryIntent = false;
+    _peerRetryIntent = false;
+    _nextRid = 1;
+    _nextQid = 1;
+    
     _setState(
       const GameState.initial().copyWith(
         phase: GamePhase.pairing,
@@ -806,13 +1104,13 @@ final class GameEngine {
 
   /// ✅ NEW: Send share offer (bilgi paylaşma)
   void sendShareOffer({required Object kind, required String value}) {
-    print('[ENGINE] 📤 ═══════════════════════════════════════');
-    print('[ENGINE] 📤 PAYLAŞIM GÖNDERME BAŞLATILDI');
-    print('[ENGINE] 📤 ═══════════════════════════════════════');
-    print('[ENGINE]    - Tür: $kind');
-    print('[ENGINE]    - Değer: $value');
-    print('[ENGINE]    - Session ID: $sessionId');
-    print('[ENGINE]    - Peer ID: $_peerId');
+    _log('[ENGINE] 📤 ═══════════════════════════════════════');
+    _log('[ENGINE] 📤 PAYLAŞIM GÖNDERME BAŞLATILDI');
+    _log('[ENGINE] 📤 ═══════════════════════════════════════');
+    _log('[ENGINE]    - Tür: $kind');
+    _log('[ENGINE]    - Değer: $value');
+    _log('[ENGINE]    - Session ID: $sessionId');
+    _log('[ENGINE]    - Peer ID: $_peerId');
     
     final msg = ShareOfferMessage(
       sid: sessionId,
@@ -822,36 +1120,36 @@ final class GameEngine {
       extra: {'shareKind': kind.toString()}, // Serialize enum
     );
     
-    print('[ENGINE] 📨 BLE üzerinden gönderiliyor...');
+    _log('[ENGINE] 📨 BLE üzerinden gönderiliyor...');
     transport.send(msg);
-    print('[ENGINE] ✅ Gönderme tamamlandı!');
+    _log('[ENGINE] ✅ Gönderme tamamlandı!');
   }
 
   /// ✅ NEW: Rakıp bilgi paylaştığında çağrılır
   void _onPeerShareOffer(ShareOfferMessage msg) {
     if (msg.kind != 'share_info' || msg.value.isEmpty) {
-      print('[ENGINE] ⚠️ Geçersiz share offer - kind: ${msg.kind}, value: ${msg.value}');
+      _log('[ENGINE] ⚠️ Geçersiz share offer - kind: ${msg.kind}, value: ${msg.value}');
       return;
     }
     
-    print('[ENGINE] 📥 ═══════════════════════════════════════');
-    print('[ENGINE] 📥 RAKIP PAYLAŞIM ALINDI!');
-    print('[ENGINE] 📥 ═══════════════════════════════════════');
-    print('[ENGINE]    - Değer: ${msg.value}');
-    print('[ENGINE]    - Extra: ${msg.extra}');
+    _log('[ENGINE] 📥 ═══════════════════════════════════════');
+    _log('[ENGINE] 📥 RAKIP PAYLAŞIM ALINDI!');
+    _log('[ENGINE] 📥 ═══════════════════════════════════════');
+    _log('[ENGINE]    - Değer: ${msg.value}');
+    _log('[ENGINE]    - Extra: ${msg.extra}');
     
     // Parse share kind from extra
     final shareKindStr = msg.extra?['shareKind'] as String? ?? '';
     final peerShareKind = shareKindStr.contains('phone') ? 'phone' : 'social';
-    print('[ENGINE]    - Tür (parse): $peerShareKind');
+    _log('[ENGINE]    - Tür (parse): $peerShareKind');
     
-    print('[ENGINE] 🔄 GameState güncelleniyor...');
+    _log('[ENGINE] 🔄 GameState güncelleniyor...');
     _setState(_state.copyWith(
       peerShared: true,
       peerShareValue: msg.value,
       peerShareKind: peerShareKind,
     ));
-    print('[ENGINE] ✅ Durum güncellendi!');
+    _log('[ENGINE] ✅ Durum güncellendi!');
   }
 
   Future<void> dispose() async {

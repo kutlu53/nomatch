@@ -3,11 +3,19 @@ import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
-import '../../ui/color_palette_manager.dart';
+import '../../theme/game_colors.dart';
+import '../../theme/app_background.dart';
 import 'game_engine.dart';
 import 'game_state.dart';
 import 'models.dart';
+
+/// ✅ PERFORMANCE: Debug logging control
+const bool _kGameScreenDebug = false; // UI logs are usually too verbose
+void _gsLog(String msg) {
+  if (_kGameScreenDebug) print(msg);
+}
 
 /// ✅ OPTIMIZATION: Image precache helper
 class _ImagePrecacher {
@@ -19,60 +27,125 @@ class _ImagePrecacher {
     try {
       await precacheImage(AssetImage(asset), context);
       _precachedAssets.add(asset);
-      print('[PRECACHE] ✅ Precached: $asset');
+      _gsLog('[PRECACHE] ✅ Precached: $asset');
     } catch (e) {
-      print('[PRECACHE] ⚠️ Failed to precache $asset: $e');
+      _gsLog('[PRECACHE] ⚠️ Failed to precache $asset: $e');
     }
   }
   
-  static void clear() {
-    _precachedAssets.clear();
-  }
 }
 
 class GameScreen extends StatefulWidget {
   final GameEngine engine;
   final VoidCallback onOpenShare;
   final VoidCallback onReset; // ✅ NEW: Reset callback for terminalFail
+  final Stream<bool>? connectionStatus; // ✅ NEW: BLE connection status stream
 
   const GameScreen({
     super.key,
     required this.engine,
     required this.onOpenShare,
     required this.onReset,
+    this.connectionStatus,
   });
 
   @override
   State<GameScreen> createState() => _GameScreenState();
 }
 
-class _GameScreenState extends State<GameScreen> {
+class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   RoundSnapshot? _snap;
   late final StreamSubscription<RoundSnapshot> _sub;
+  StreamSubscription<bool>? _connectionSub;
   bool _disposed = false;
-  bool _shareScreenRequested = false; // ✅ NEW: Prevent duplicate share screen calls
-  int? _selectedInRound; // ✅ Bu round'da seçim yapıldı mı (round numarası)
+  bool _shareScreenRequested = false;
+  int? _selectedInRound;
+  bool _isReconnecting = false;
+  late AnimationController _reconnectPulseController;
+  late AnimationController _fadeInController;
+  late Animation<double> _fadeInAnimation;
+
+  // UX-4: Başarı animasyonu tap-to-skip için iptal edilebilir timer
+  Timer? _shareTimer;
+
+  // UX-3: Oyun içi uzun basış çıkış
+  Timer? _exitLongPressTimer;
+  bool _exitLongPressActive = false;
+  late AnimationController _exitProgressController;
 
   @override
   void initState() {
     super.initState();
     
+    // Ekran açılış fade-in
+    _fadeInController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 350),
+    );
+    _fadeInAnimation = CurvedAnimation(parent: _fadeInController, curve: Curves.easeIn);
+    _fadeInController.forward();
+
+    // ✅ Reconnect pulse animation
+    _reconnectPulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..repeat(reverse: true);
+
+    // UX-3: Çıkış uzun basış progress animasyonu
+    _exitProgressController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    );
+    
+    // ✅ Listen to connection status
+    _connectionSub = widget.connectionStatus?.listen((isConnected) {
+      if (mounted) {
+        setState(() => _isReconnecting = !isConnected);
+        _gsLog('[GAME-SCREEN] 📡 Connection status: ${isConnected ? "✅ Connected" : "⚠️ Reconnecting..."}');
+      }
+    });
+    
     // ✅ SAFETY: Check initial engine state - if already terminal, something is wrong
     final initialPhase = widget.engine.state.phase;
-    print('[GAME-SCREEN] 🆕 initState - initial engine phase: $initialPhase');
+    _gsLog('[GAME-SCREEN] 🆕 initState - initial engine phase: $initialPhase');
     if (initialPhase == GamePhase.terminalSuccess || initialPhase == GamePhase.terminalFail) {
-      print('[GAME-SCREEN] ⚠️ WARNING: Engine started in terminal state! This should not happen.');
+      _gsLog('[GAME-SCREEN] ⚠️ WARNING: Engine started in terminal state! This should not happen.');
+    }
+    
+    // ✅ FIX: Initialize _snap from current engine state to avoid loading spinner
+    final currentRound = widget.engine.state.currentRound;
+    if (currentRound != null && widget.engine.state.phase == GamePhase.playing) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      _snap = RoundSnapshot(
+        sessionId: '', // Will be updated by stream
+        peerId: '',
+        isLeader: false,
+        roundNumber: currentRound.rid,
+        startedAtMs: now,
+        deadlineMs: currentRound.deadlineMs,
+        localChoice: currentRound.localChoice?.name,
+        localRevision: currentRound.localRev,
+        localFinal: currentRound.localFinal,
+        peerChoice: currentRound.peerChoice?.name,
+        peerRevision: currentRound.peerRev,
+        peerFinal: currentRound.peerFinal,
+        terminal: null, // ✅ null = no terminal state yet
+        phase: GamePhase.playing,
+        topAsset: currentRound.topAsset,
+        bottomAsset: currentRound.bottomAsset,
+      );
+      _gsLog('[GAME-SCREEN] ✅ Initialized _snap from engine state - rid=${currentRound.rid}');
     }
     
     _sub = widget.engine.snapshots.listen((s) {
       // ✅ CRITICAL: Check mounted FIRST before any operations
       if (!mounted) {
-        print('[GAME-SCREEN] ⚠️ Not mounted - ignoring event');
+        _gsLog('[GAME-SCREEN] ⚠️ Not mounted - ignoring event');
         return;
       }
       
       if (_disposed) {
-        print('[GAME-SCREEN] 🛑 Disposed - ignoring snapshot, cancelling subscription');
+        _gsLog('[GAME-SCREEN] 🛑 Disposed - ignoring snapshot, cancelling subscription');
         _sub.cancel();
         return;
       }
@@ -84,15 +157,29 @@ class _GameScreenState extends State<GameScreen> {
           oldSnap.roundNumber != s.roundNumber ||
           oldSnap.localChoice != s.localChoice ||
           oldSnap.peerChoice != s.peerChoice ||
-          oldSnap.terminal != s.terminal;
+          oldSnap.terminal != s.terminal ||
+          oldSnap.topAsset != s.topAsset ||      // ✅ Asset değişikliklerini de kontrol et
+          oldSnap.bottomAsset != s.bottomAsset;
       
       if (!needsRebuild) {
+        _gsLog('[GAME-SCREEN] ⏭️ Skip rebuild - unchanged snapshot');
         return; // Skip unnecessary rebuilds
       }
       
+      _gsLog('[GAME-SCREEN] 🔄 Rebuild triggered - rid=${s.roundNumber}, phase=${s.phase}, top=${s.topAsset != null}');
+      
       // ✅ SAFETY: Log phase transitions
       if (oldSnap?.phase != s.phase) {
-        print('[GAME-SCREEN] 🔄 Phase changed: ${oldSnap?.phase} -> ${s.phase}');
+        _gsLog('[GAME-SCREEN] 🔄 Phase changed: ${oldSnap?.phase} -> ${s.phase}');
+        
+        // ✅ FIX: Reset state flags when game restarts (pairing phase = new game)
+        if (s.phase == GamePhase.pairing || s.phase == GamePhase.playing) {
+          if (oldSnap?.phase == GamePhase.terminalFail || oldSnap?.phase == GamePhase.terminalSuccess) {
+            _gsLog('[GAME-SCREEN] 🔄 Game restart detected - resetting state flags');
+            _shareScreenRequested = false;
+            _selectedInRound = null;
+          }
+        }
       }
       
       setState(() => _snap = s);
@@ -100,87 +187,69 @@ class _GameScreenState extends State<GameScreen> {
       // ✅ When success, show animation then share (3 sec animation)
       if (s.phase == GamePhase.terminalSuccess) {
         if (_shareScreenRequested) {
-          print('[GAME-SCREEN] ⚠️ Share screen already requested, ignoring duplicate');
+          _gsLog('[GAME-SCREEN] ⚠️ Share screen already requested, ignoring duplicate');
           return;
         }
         
         // ✅ SAFETY: Only proceed if we have played at least 5 rounds
         final similarity = widget.engine.state.similarity;
         if (similarity < 5) {
-          print('[GAME-SCREEN] ⚠️ terminalSuccess but similarity=$similarity (not 5)! IGNORING spurious event.');
+          _gsLog('[GAME-SCREEN] ⚠️ terminalSuccess but similarity=$similarity (not 5)! IGNORING spurious event.');
           return;
         }
         
-        print('[GAME-SCREEN] 🎉 terminalSuccess - animation playing (similarity=$similarity)');
-        print('[GAME-SCREEN] 🎉 Waiting 3.2 sec before calling onOpenShare()');
-        Future.delayed(const Duration(milliseconds: 3200), () {
-          if (_disposed || !mounted) {
-            print('[GAME-SCREEN] 🛑 Screen disposed/unmounted before onOpenShare()');
-            return;
-          }
-          if (_shareScreenRequested) {
-            print('[GAME-SCREEN] ⚠️ Share screen already requested, ignoring');
-            return;
-          }
+        _gsLog('[GAME-SCREEN] 🎉 terminalSuccess - animation playing (similarity=$similarity)');
+        // UX-4: Timer iptal edilebilir → tap-to-skip mümkün.
+        _shareTimer?.cancel();
+        _shareTimer = Timer(const Duration(milliseconds: 3200), () {
+          if (_disposed || !mounted || _shareScreenRequested) return;
           _shareScreenRequested = true;
-          print('[GAME-SCREEN] 🎉 3.2 sec passed - calling onOpenShare()');
+          _gsLog('[GAME-SCREEN] 🎉 3.2 sec passed - calling onOpenShare()');
           widget.onOpenShare();
-          print('[GAME-SCREEN] 🎉 onOpenShare() called');
         });
       }
       
-      // ✅ When failure, show animation then RESET (not share screen)
+      // ✅ When failure, show animation (retry button will appear after animation)
       if (s.phase == GamePhase.terminalFail) {
-        if (_shareScreenRequested) {
-          print('[GAME-SCREEN] ⚠️ Reset already requested, ignoring duplicate');
-          return;
-        }
-        
         // ✅ SAFETY: Only proceed if we have 5 differences
         final difference = widget.engine.state.difference;
         if (difference < 5) {
-          print('[GAME-SCREEN] ⚠️ terminalFail but difference=$difference (not 5)! IGNORING spurious event.');
+          _gsLog('[GAME-SCREEN] ⚠️ terminalFail but difference=$difference (not 5)! IGNORING spurious event.');
           return;
         }
         
-        print('[GAME-SCREEN] ❌ terminalFail - animation playing (difference=$difference)');
-        Future.delayed(const Duration(milliseconds: 3200), () {
-          if (_disposed || !mounted) {
-            print('[GAME-SCREEN] 🛑 Screen disposed/unmounted before onReset()');
-            return;
-          }
-          if (_shareScreenRequested) {
-            print('[GAME-SCREEN] ⚠️ Reset already requested, ignoring');
-            return;
-          }
-          _shareScreenRequested = true;
-          print('[GAME-SCREEN] ❌ Animation done - resetting app');
-          widget.onReset(); // ✅ Reset instead of opening share screen
-        });
+        _gsLog('[GAME-SCREEN] ❌ terminalFail - animation playing (difference=$difference)');
+        // ✅ NO AUTO-RESET: User must tap retry button
       }
     });
   }
 
   @override
   void dispose() {
-    print('[GAME-SCREEN] 🛑 Disposing GameScreen...');
+    _gsLog('[GAME-SCREEN] 🛑 Disposing GameScreen...');
     _disposed = true;
-    print('[GAME-SCREEN] 🛑 Immediately cancelling subscription on dispose...');
+    _gsLog('[GAME-SCREEN] 🛑 Immediately cancelling subscription on dispose...');
     _sub.cancel();
-    print('[GAME-SCREEN] 🛑 Subscription cancelled immediately');
+    _connectionSub?.cancel();
+    _shareTimer?.cancel();
+    _exitLongPressTimer?.cancel();
+    _fadeInController.dispose();
+    _reconnectPulseController.dispose();
+    _exitProgressController.dispose();
+    _gsLog('[GAME-SCREEN] 🛑 Subscription cancelled immediately');
     super.dispose();
-    print('[GAME-SCREEN] ✅ GameScreen disposed completely');
+    _gsLog('[GAME-SCREEN] ✅ GameScreen disposed completely');
   }
 
   @override
   Widget build(BuildContext context) {
     if (_disposed) {
-      print('[GAME-SCREEN] 🛑 Build called but screen disposed - returning empty');
+      _gsLog('[GAME-SCREEN] 🛑 Build called but screen disposed - returning empty');
       return const SizedBox.shrink();
     }
     
     final snap = _snap;
-    print('[GAME-SCREEN] 🎮 BUILD CALLED - snap=$snap, phase=${snap?.phase}, rid=${snap?.roundNumber}');
+    _gsLog('[GAME-SCREEN] 🎮 BUILD CALLED - snap=$snap, phase=${snap?.phase}, rid=${snap?.roundNumber}');
     
     // ✅ OPTIMIZATION: Precache current round images
     if (snap != null) {
@@ -188,44 +257,40 @@ class _GameScreenState extends State<GameScreen> {
       _ImagePrecacher.precacheIfNeeded(context, snap.bottomAsset);
     }
     
-    // ✅ Get palette colors
-    final paletteManager = ColorPaletteManager();
-    final palette = paletteManager.currentPalette;
-    final colors = palette.colors;
-    
-    // ✅ Fallback if colors is empty
-    final finalColors = colors.isEmpty ? const [
-      Color(0xFF1a1a2e),
-      Color(0xFF16213e),
-      Color(0xFF0f3460),
-    ] : colors;
-    
-    print('[GAME-SCREEN] 🎨 Palette: ${palette.emoji}, Colors count: ${finalColors.length}');
-    print('[GAME-SCREEN] 🎨 First color: ${finalColors[0]}, Last color: ${finalColors[finalColors.length - 1]}');
-    
-    return SizedBox.expand(
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: paletteManager.currentGradient,
-        ),
-        child: GestureDetector(
+    return FadeTransition(
+      opacity: _fadeInAnimation,
+      child: SizedBox.expand(
+      child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          // ❌ REMOVED: onDoubleTap was causing accidental ShareScreen opens
-          // ShareScreen only opens when game reaches terminal state
+          // UX-3: Oyun sırasında 3 sn uzun basış → çıkış. terminalFail/Success
+          // fazlarında _FailureAnimationOverlay / _SuccessAnimationOverlay kendi
+          // gesture'larını yakalar; bu handler yalnızca playing fazında devreye girer.
+          onLongPressStart: (_) {
+            if (_snap?.phase != GamePhase.playing) return;
+            setState(() => _exitLongPressActive = true);
+            _exitProgressController.forward(from: 0);
+            _exitLongPressTimer = Timer(const Duration(seconds: 3), () {
+              if (mounted) widget.onReset();
+            });
+          },
+          onLongPressEnd: (_) {
+            _exitLongPressTimer?.cancel();
+            _exitProgressController.reverse();
+            if (mounted) setState(() => _exitLongPressActive = false);
+          },
           child: LayoutBuilder(
             builder: (context, c) {
               final h = c.maxHeight;
               final halfH = h / 2;
 
-              print('[GAME-SCREEN] ⚠️ LayoutBuilder constraint: maxHeight=$h, maxWidth=${c.maxWidth}');
+              _gsLog('[GAME-SCREEN] ⚠️ LayoutBuilder constraint: maxHeight=$h, maxWidth=${c.maxWidth}');
 
               // ✅ Bu round'da seçim yapıldı mı kontrol et
               final currentRound = snap?.roundNumber ?? 0;
               final alreadySelectedThisRound = _selectedInRound == currentRound;
               
-              // ✅ Tıklama engeli: sadece bu round'da zaten seçildiyse
-              // NOT: Cooldown kaldırıldı - engine zaten localFinal ile koruma yapıyor
-              final tapDisabled = alreadySelectedThisRound;
+              // ✅ Tıklama engeli: bu round'da zaten seçildiyse VEYA reconnect sırasında
+              final tapDisabled = alreadySelectedThisRound || _isReconnecting;
 
               // ✅ İlk round yüklenene kadar sadece gradient göster
               final hasVisuals = snap != null && snap.topAsset != null && snap.bottomAsset != null;
@@ -242,7 +307,7 @@ class _GameScreenState extends State<GameScreen> {
                       child: CircularProgressIndicator(
                         strokeWidth: 3,
                         valueColor: AlwaysStoppedAnimation<Color>(
-                          Colors.white.withOpacity(0.5),
+                          GameColors.purple.withValues(alpha: GameColors.opacityMedium),
                         ),
                       ),
                     ),
@@ -256,32 +321,37 @@ class _GameScreenState extends State<GameScreen> {
                   right: 0,
                   height: halfH,
                   child: RepaintBoundary(
-                    child: IgnorePointer(
-                      ignoring: snap?.phase != GamePhase.playing || tapDisabled,
+                    child: AnimatedOpacity(
+                      opacity: _isReconnecting ? 0.5 : 1.0,
+                      duration: const Duration(milliseconds: 300),
+                      child: IgnorePointer(
+                      ignoring: snap.phase != GamePhase.playing || tapDisabled || _isReconnecting,
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 300),
                         transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
                         child: _HalfBoard(
-                          key: ValueKey(snap?.roundNumber),
+                          key: ValueKey(snap.roundNumber),
                           isTop: true,
-                          choice: snap?.peerChoice,
-                          phase: snap?.phase ?? GamePhase.playing,
-                          terminal: snap?.terminal,
-                          asset: snap?.topAsset,
+                          choice: snap.peerChoice,
+                          phase: snap.phase,
+                          terminal: snap.terminal,
+                          asset: snap.topAsset,
+                          availableHeight: halfH, // ✅ Ekran yarısı
                           onTap: () {
                             // ✅ Round kontrolü
                             if (_selectedInRound == currentRound) {
-                              print('[GAME-SCREEN] 🚫 Already selected in this round - tap ignored');
+                              _gsLog('[GAME-SCREEN] 🚫 Already selected in this round - tap ignored');
                               return;
                             }
                             
-                            print('[GAME-SCREEN] ✅ TAP ACCEPTED - round=$currentRound, choice=top');
+                            _gsLog('[GAME-SCREEN] ✅ TAP ACCEPTED - round=$currentRound, choice=top');
                             _selectedInRound = currentRound;
                             widget.engine.select('top');
                             setState(() {}); // Rebuild to update IgnorePointer
                           },
                         ),
                       ),
+                    ),
                     ),
                   ),
                 ),
@@ -294,32 +364,37 @@ class _GameScreenState extends State<GameScreen> {
                   right: 0,
                   height: halfH,
                   child: RepaintBoundary(
-                    child: IgnorePointer(
-                      ignoring: snap?.phase != GamePhase.playing || tapDisabled,
+                    child: AnimatedOpacity(
+                      opacity: _isReconnecting ? 0.5 : 1.0,
+                      duration: const Duration(milliseconds: 300),
+                      child: IgnorePointer(
+                      ignoring: snap.phase != GamePhase.playing || tapDisabled || _isReconnecting,
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 300),
                         transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
                         child: _HalfBoard(
-                          key: ValueKey(snap?.roundNumber),
+                          key: ValueKey(snap.roundNumber),
                           isTop: false,
-                          choice: snap?.localChoice,
-                          phase: snap?.phase ?? GamePhase.playing,
-                          terminal: snap?.terminal,
-                          asset: snap?.bottomAsset,
+                          choice: snap.localChoice,
+                          phase: snap.phase,
+                          terminal: snap.terminal,
+                          asset: snap.bottomAsset,
+                          availableHeight: halfH, // ✅ Ekran yarısı
                           onTap: () {
                             // ✅ Round kontrolü
                             if (_selectedInRound == currentRound) {
-                              print('[GAME-SCREEN] 🚫 Already selected in this round - tap ignored');
+                              _gsLog('[GAME-SCREEN] 🚫 Already selected in this round - tap ignored');
                               return;
                             }
                             
-                            print('[GAME-SCREEN] ✅ TAP ACCEPTED - round=$currentRound, choice=bottom');
+                            _gsLog('[GAME-SCREEN] ✅ TAP ACCEPTED - round=$currentRound, choice=bottom');
                             _selectedInRound = currentRound;
                             widget.engine.select('bottom');
                             setState(() {}); // Rebuild to update IgnorePointer
                           },
                         ),
                       ),
+                    ),
                     ),
                   ),
                 ),
@@ -328,23 +403,105 @@ class _GameScreenState extends State<GameScreen> {
                 if (snap?.phase == GamePhase.terminalSuccess)
                   Positioned.fill(
                     child: RepaintBoundary(
-                      child: _SuccessAnimationOverlay(),
+                      child: _SuccessAnimationOverlay(
+                        // UX-4: Tapa animasyonu atla, anında share ekranına geç.
+                        onTap: () {
+                          _shareTimer?.cancel();
+                          if (!_shareScreenRequested) {
+                            _shareScreenRequested = true;
+                            widget.onOpenShare();
+                          }
+                        },
+                      ),
                     ),
                   ),
 
                 // ✅ FAILURE ANIMATION OVERLAY (RepaintBoundary: isolate from main tree)
-                if (snap?.phase == GamePhase.terminalFail)
+                // ✅ Also show during 'restarting' phase (green arrow before game starts)
+                // ✅ AnimatedSwitcher for smooth fade-out transition
+                // ✅ FIX: IgnorePointer when phase is playing - overlay fade-out shouldn't block taps
+                Positioned.fill(
+                  child: IgnorePointer(
+                    ignoring: snap?.phase == GamePhase.playing,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 300),
+                      transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
+                      child: (snap?.phase == GamePhase.terminalFail || snap?.phase == GamePhase.restarting)
+                        ? RepaintBoundary(
+                            key: const ValueKey('failure_overlay'),
+                            child: _FailureAnimationOverlay(
+                              engine: widget.engine,
+                              onTimeout: () {
+                                _gsLog('[GAME-SCREEN] ⏱️ Timeout - full reset to pairing');
+                                widget.onReset();
+                              },
+                            ),
+                          )
+                        : const SizedBox.shrink(key: ValueKey('no_overlay')),
+                    ),
+                  ),
+                ),
+
+                // GamePhase.share ve terminal engine tarafından hiç set edilmiyor;
+                // _ResultOverlay şu an erişilemez durum — ileride kullanılırsa açılacak.
+
+                // UX-3: Uzun basış çıkış — merkezdeki progress ring
+                if (_exitLongPressActive)
                   Positioned.fill(
-                    child: RepaintBoundary(
-                      child: _FailureAnimationOverlay(),
+                    child: IgnorePointer(
+                      child: Center(
+                        child: AnimatedBuilder(
+                          animation: _exitProgressController,
+                          builder: (context, _) => SizedBox(
+                            width: 80,
+                            height: 80,
+                            child: CircularProgressIndicator(
+                              value: _exitProgressController.value,
+                              backgroundColor: GameColors.purple.withValues(alpha: 0.15),
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                GameColors.purple.withValues(alpha: 0.75),
+                              ),
+                              strokeWidth: 5,
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
 
-                // ✅ RESULT OVERLAY
-                if (snap?.phase == GamePhase.share && snap?.terminal != null)
+                // ✅ RECONNECT INDICATOR — karartma overlay + merkezde pulse eden turuncu halka
+                if (_isReconnecting)
                   Positioned.fill(
                     child: IgnorePointer(
-                      child: _ResultOverlay(terminal: snap!.terminal!),
+                      child: AnimatedBuilder(
+                        animation: _reconnectPulseController,
+                        builder: (context, child) {
+                          final pulse = _reconnectPulseController.value;
+                          return Container(
+                            color: Colors.black.withValues(alpha: 0.45),
+                            child: Center(
+                              child: Container(
+                                width: 56 + (pulse * 12),
+                                height: 56 + (pulse * 12),
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: GameColors.reconnecting.withValues(alpha: 0.4 + (pulse * 0.6)),
+                                    width: 3 + (pulse * 2),
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: GameColors.reconnecting.withValues(alpha: 0.2 + (pulse * 0.3)),
+                                      blurRadius: 16 + (pulse * 8),
+                                      spreadRadius: 2,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ),
               ],
@@ -364,6 +521,7 @@ class _HalfBoard extends StatefulWidget {
   final RoundTerminal? terminal;
   final String? asset;
   final VoidCallback? onTap;
+  final double availableHeight; // ✅ Ekran yarısının yüksekliği
 
   const _HalfBoard({
     super.key,
@@ -373,23 +531,50 @@ class _HalfBoard extends StatefulWidget {
     required this.terminal,
     this.asset,
     this.onTap,
+    this.availableHeight = 400, // Default fallback
   });
 
   @override
   State<_HalfBoard> createState() => _HalfBoardState();
 }
 
-class _HalfBoardState extends State<_HalfBoard> {
+class _HalfBoardState extends State<_HalfBoard> with SingleTickerProviderStateMixin {
   bool _pressed = false;
   bool _alreadyTapped = false; // ✅ Bu round'da tıklandı mı (key değişince sıfırlanır)
+
+  late final AnimationController _bounceController;
+  late final Animation<double> _bounceAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _bounceController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
+    // 1.0 → 1.07 → 1.0 (seçim yerleşti hissi)
+    _bounceAnimation = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.07), weight: 35),
+      TweenSequenceItem(tween: Tween(begin: 1.07, end: 1.0), weight: 65),
+    ]).animate(CurvedAnimation(parent: _bounceController, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _bounceController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = _choiceColor(widget.choice);
 
+    // ✅ Görsel boyutu: ekran yarısının %85'i (biraz boşluk bırak)
+    final imageSize = (widget.availableHeight * 0.85).clamp(200.0, 500.0);
+
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24.0),
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
         child: GestureDetector(
           onTapDown: (_) {
             if (!_alreadyTapped) {
@@ -400,22 +585,30 @@ class _HalfBoardState extends State<_HalfBoard> {
             if (_alreadyTapped) return; // ✅ Zaten tıklandıysa ignore et
             _alreadyTapped = true; // ✅ Hemen kilitle!
             setState(() => _pressed = false);
+            HapticFeedback.selectionClick();
+            _bounceController.forward(from: 0);
             widget.onTap?.call();
           },
           onTapCancel: () => setState(() => _pressed = false),
-          child: AnimatedScale(
-            scale: _pressed ? 0.96 : 1.0,
-            duration: const Duration(milliseconds: 50),
-            curve: Curves.easeOut,
-            child: AnimatedContainer(
+          child: AnimatedBuilder(
+            animation: _bounceController,
+            builder: (context, child) => Transform.scale(
+              scale: _bounceController.isAnimating ? _bounceAnimation.value : 1.0,
+              child: child,
+            ),
+            child: AnimatedScale(
+              scale: _pressed ? 0.96 : 1.0,
+              duration: const Duration(milliseconds: 50),
+              curve: Curves.easeOut,
+              child: AnimatedContainer(
               duration: const Duration(milliseconds: 50),
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(_pressed ? 0.4 : 0.3),
+                color: InkPlum.surface.withValues(alpha: _pressed ? 0.8 : 0.6),
                 borderRadius: BorderRadius.circular(32),
                 boxShadow: [
                   // ✅ Normal gölge
                   BoxShadow(
-                    color: Colors.black.withOpacity(_pressed ? 0.2 : 0.5),
+                    color: InkPlum.edge.withValues(alpha: _pressed ? 0.4 : 0.7),
                     blurRadius: _pressed ? 8 : 20,
                     offset: Offset(0, _pressed ? 2 : 8),
                     spreadRadius: _pressed ? 0 : 2,
@@ -423,38 +616,45 @@ class _HalfBoardState extends State<_HalfBoard> {
                   // ✅ Seçim parlaklığı (glow) - sadece basılıyken
                   if (_pressed)
                     BoxShadow(
-                      color: Colors.white.withOpacity(0.4),
+                      color: GameColors.purple.withValues(alpha: 0.4),
                       blurRadius: 20,
                       spreadRadius: 2,
                     ),
                 ],
                 border: Border.all(
                   color: _pressed 
-                      ? Colors.white.withOpacity(0.8)  // Parlak border
-                      : Colors.white.withOpacity(0.2),
+                      ? GameColors.borderLight  // Parlak border
+                      : GameColors.borderSubtle,
                   width: _pressed ? 3 : 2,
                 ),
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(30),
-                child: widget.asset != null
-                    ? Image.asset(
-                        widget.asset!,
-                        key: ValueKey<String>(widget.asset ?? 'empty'),
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return CustomPaint(
-                            painter: _BlobPainter(color: c),
-                            size: const Size.square(220),
-                          );
-                        },
-                      )
-                    : CustomPaint(
-                        key: ValueKey<String>(widget.choice ?? 'empty'),
-                        painter: _BlobPainter(color: c),
-                        size: const Size.square(220),
-                      ),
+                child: SizedBox(
+                  width: imageSize,
+                  height: imageSize,
+                  child: widget.asset != null
+                      ? Image.asset(
+                          widget.asset!,
+                          key: ValueKey<String>(widget.asset ?? 'empty'),
+                          width: imageSize,
+                          height: imageSize,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return CustomPaint(
+                              painter: _BlobPainter(color: c),
+                              size: Size.square(imageSize),
+                            );
+                          },
+                        )
+                      : CustomPaint(
+                          key: ValueKey<String>(widget.choice ?? 'empty'),
+                          painter: _BlobPainter(color: c),
+                          size: Size.square(imageSize),
+                        ),
+                ),
               ),
+            ),
             ),
           ),
         ),
@@ -465,13 +665,13 @@ class _HalfBoardState extends State<_HalfBoard> {
   static Color _choiceColor(String? choice) {
     switch (choice) {
       case 'top':
-        return Colors.tealAccent.withOpacity(0.85);
+        return GameColors.choiceTop.withValues(alpha: GameColors.opacityHigh);
       case 'bottom':
-        return Colors.orangeAccent.withOpacity(0.85);
+        return GameColors.choiceBottom.withValues(alpha: GameColors.opacityHigh);
       case GameEngine.noSelectionChoice:
-        return Colors.white.withOpacity(0.10);
+        return GameColors.choiceNone.withValues(alpha: GameColors.opacityLow);
       default:
-        return Colors.white.withOpacity(0.04);
+        return GameColors.choiceDefault.withValues(alpha: GameColors.opacitySubtle);
     }
   }
 }
@@ -486,8 +686,8 @@ class _BlobPainter extends CustomPainter {
     final r = math.min(size.width, size.height) / 2;
     final p = Paint()..color = color;
     canvas.drawCircle(c, r * 0.62, p);
-    canvas.drawCircle(c.translate(r * 0.16, -r * 0.12), r * 0.26, p..color = color.withOpacity(color.opacity * 0.75));
-    canvas.drawCircle(c.translate(-r * 0.14, r * 0.18), r * 0.22, p..color = color.withOpacity(color.opacity * 0.55));
+    canvas.drawCircle(c.translate(r * 0.16, -r * 0.12), r * 0.26, p..color = color.withValues(alpha: color.a * 0.75));
+    canvas.drawCircle(c.translate(-r * 0.14, r * 0.18), r * 0.22, p..color = color.withValues(alpha: color.a * 0.55));
   }
 
   @override
@@ -518,18 +718,18 @@ class _ResultOverlayState extends State<_ResultOverlay> with SingleTickerProvide
   @override
   Widget build(BuildContext context) {
     final base = switch (widget.terminal) {
-      RoundTerminal.match => Colors.greenAccent.withOpacity(0.18),
-      RoundTerminal.mismatch => Colors.redAccent.withOpacity(0.18),
-      RoundTerminal.localNoSelection => Colors.yellowAccent.withOpacity(0.16),
-      RoundTerminal.peerNoSelection => Colors.cyanAccent.withOpacity(0.16),
-      RoundTerminal.bothNoSelection => Colors.white.withOpacity(0.12),
+      RoundTerminal.match => GameColors.match.withValues(alpha: 0.18),
+      RoundTerminal.mismatch => GameColors.mismatch.withValues(alpha: 0.18),
+      RoundTerminal.localNoSelection => GameColors.localTimeout.withValues(alpha: 0.16),
+      RoundTerminal.peerNoSelection => GameColors.peerTimeout.withValues(alpha: 0.16),
+      RoundTerminal.bothNoSelection => GameColors.bothTimeout.withValues(alpha: 0.12),
     };
 
     return AnimatedBuilder(
       animation: _a,
       builder: (context, _) {
         return ColoredBox(
-          color: base.withOpacity(base.opacity * (0.65 + 0.35 * _a.value)),
+          color: base.withValues(alpha: base.a * (0.65 + 0.35 * _a.value)),
           child: Center(
             child: Transform.scale(
               scale: 0.92 + 0.06 * _a.value,
@@ -555,22 +755,22 @@ class _ResultMarkPainter extends CustomPainter {
     final r = math.min(size.width, size.height) / 2;
 
     final color = switch (terminal) {
-      RoundTerminal.match => Colors.greenAccent.withOpacity(0.9),
-      RoundTerminal.mismatch => Colors.redAccent.withOpacity(0.9),
-      RoundTerminal.localNoSelection => Colors.yellowAccent.withOpacity(0.9),
-      RoundTerminal.peerNoSelection => Colors.cyanAccent.withOpacity(0.9),
-      RoundTerminal.bothNoSelection => Colors.white.withOpacity(0.65),
+      RoundTerminal.match => GameColors.match.withValues(alpha: GameColors.opacityHigh),
+      RoundTerminal.mismatch => GameColors.mismatch.withValues(alpha: GameColors.opacityHigh),
+      RoundTerminal.localNoSelection => GameColors.localTimeout.withValues(alpha: GameColors.opacityHigh),
+      RoundTerminal.peerNoSelection => GameColors.peerTimeout.withValues(alpha: GameColors.opacityHigh),
+      RoundTerminal.bothNoSelection => GameColors.bothTimeout.withValues(alpha: GameColors.opacityMedium),
     };
 
     final p = Paint()..color = color;
     final ring = Paint()
-      ..color = color.withOpacity(color.opacity * 0.4)
+      ..color = color.withValues(alpha: color.a * 0.4)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 12;
 
     canvas.drawCircle(c, r * 0.55, ring);
     canvas.drawCircle(c.translate(r * 0.10, -r * 0.08), r * 0.18, p);
-    canvas.drawCircle(c.translate(-r * 0.12, r * 0.10), r * 0.14, p..color = color.withOpacity(color.opacity * 0.75));
+    canvas.drawCircle(c.translate(-r * 0.12, r * 0.10), r * 0.14, p..color = color.withValues(alpha: color.a * 0.75));
   }
 
   @override
@@ -579,7 +779,8 @@ class _ResultMarkPainter extends CustomPainter {
 
 // ✅ NEW: Success animation overlay
 class _SuccessAnimationOverlay extends StatefulWidget {
-  const _SuccessAnimationOverlay();
+  final VoidCallback? onTap;
+  const _SuccessAnimationOverlay({this.onTap});
 
   @override
   State<_SuccessAnimationOverlay> createState() => _SuccessAnimationOverlayState();
@@ -607,16 +808,19 @@ class _SuccessAnimationOverlayState extends State<_SuccessAnimationOverlay>
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black.withOpacity(0.9),
-      child: Center(
-        child: AnimatedBuilder(
-          animation: _controller,
-          builder: (context, child) {
-            return CustomPaint(
-              painter: _SuccessAnimationPainter(animation: _controller),
-            );
-          },
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: Material(
+        color: InkPlum.base,
+        child: Center(
+          child: AnimatedBuilder(
+            animation: _controller,
+            builder: (context, child) {
+              return CustomPaint(
+                painter: _SuccessAnimationPainter(animation: _controller),
+              );
+            },
+          ),
         ),
       ),
     );
@@ -633,11 +837,11 @@ class _SuccessAnimationPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final t = (animation.value).clamp(0.0, 1.0);
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = 80.0;
+    const radius = 80.0;
 
-    // ✅ Success colors: Green/Blue for harmony
-    final primaryColor = Colors.green.shade700;
-    final accentColor = Colors.blue.shade600;
+    // ✅ Success colors: Ink Plum compatible
+    const primaryColor = GameColors.successPrimary;
+    const accentColor = GameColors.successAccent;
 
     // Phase 1: Glow pulse (0.0 - 0.4)
     if (t < 0.4) {
@@ -646,7 +850,7 @@ class _SuccessAnimationPainter extends CustomPainter {
       final glowRadius = (lerpDouble(0, radius * 1.5, glowT) ?? 0.0).clamp(0.0, double.infinity);
 
       final glowPaint = Paint()
-        ..color = primaryColor.withOpacity(glowOpacity * 0.5)
+        ..color = primaryColor.withValues(alpha: glowOpacity * 0.5)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, glowRadius * 2);
       canvas.drawCircle(center, glowRadius, glowPaint);
     }
@@ -656,15 +860,15 @@ class _SuccessAnimationPainter extends CustomPainter {
       final ringT = ((t - 0.2) / 0.55).clamp(0.0, 1.0);
       final easeT = Curves.easeInOut.transform(ringT);
 
-      final ring1Start = radius * 1.5;
-      final ring2Start = radius * 1.8;
+      const ring1Start = radius * 1.5;
+      const ring2Start = radius * 1.8;
       final ring1Radius = lerpDouble(ring1Start, 0, easeT)!;
       final ring2Radius = lerpDouble(ring2Start, 0, easeT)!;
 
       final ringOpacity = lerpDouble(0.1, 1.0, ringT)!;
 
       final ringPaint = Paint()
-        ..color = primaryColor.withOpacity(ringOpacity)
+        ..color = primaryColor.withValues(alpha: ringOpacity)
         ..style = PaintingStyle.stroke
         ..strokeWidth = lerpDouble(3.0, 16.0, ringT)!
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, lerpDouble(6.0, 20.0, ringT)!);
@@ -682,7 +886,7 @@ class _SuccessAnimationPainter extends CustomPainter {
         final mergeOpacity = lerpDouble(0.0, 0.8, mergeT)!;
 
         final mergePaint = Paint()
-          ..color = accentColor.withOpacity(mergeOpacity)
+          ..color = accentColor.withValues(alpha: mergeOpacity)
           ..maskFilter = MaskFilter.blur(BlurStyle.normal, mergeRadius * 1.2);
         canvas.drawCircle(center, mergeRadius, mergePaint);
       }
@@ -695,23 +899,23 @@ class _SuccessAnimationPainter extends CustomPainter {
       final fadeRadius = lerpDouble(radius * 0.4, radius * 0.8, fadeT)!;
 
       final fadePaint = Paint()
-        ..color = primaryColor.withOpacity(fadeOpacity)
+        ..color = primaryColor.withValues(alpha: fadeOpacity)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, fadeRadius * 0.8);
       canvas.drawCircle(center, fadeRadius, fadePaint);
 
       final pulseWave = math.sin(fadeT * math.pi * 2) * 0.2;
-      final symbolOpacity = 0.95;
+      const symbolOpacity = 0.95;
       final symbolRadius = radius * (0.25 + fadeT * 0.2 + pulseWave);
 
-      // Harmony symbol - two interlocking circles
+      // Harmony symbol - two interlocking circles (purple + lime from brand)
       final paint1 = Paint()
-        ..color = Colors.green.shade400.withOpacity(symbolOpacity)
+        ..color = GameColors.purple.withValues(alpha: symbolOpacity)
         ..strokeWidth = symbolRadius * 0.25
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round;
 
       final paint2 = Paint()
-        ..color = Colors.blue.shade400.withOpacity(symbolOpacity)
+        ..color = GameColors.lime.withValues(alpha: symbolOpacity)
         ..strokeWidth = symbolRadius * 0.25
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round;
@@ -727,15 +931,29 @@ class _SuccessAnimationPainter extends CustomPainter {
 
 // ✅ NEW: Failure animation overlay
 class _FailureAnimationOverlay extends StatefulWidget {
-  const _FailureAnimationOverlay();
+  final GameEngine engine;
+  final VoidCallback onTimeout;
+  
+  const _FailureAnimationOverlay({
+    required this.engine,
+    required this.onTimeout,
+  });
 
   @override
   State<_FailureAnimationOverlay> createState() => _FailureAnimationOverlayState();
 }
 
 class _FailureAnimationOverlayState extends State<_FailureAnimationOverlay>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late AnimationController _controller;
+  late AnimationController _buttonController;
+  late AnimationController _waitingPulseController;
+  late AnimationController _restartingController; // ✅ NEW: Green arrow animation
+  bool _animationComplete = false;
+  bool _isRestarting = false; // ✅ NEW: Track restarting state
+  bool _peerRetryHandled = false; // Peer retry gelince timer yeniden başlatıldı mı
+  Timer? _timeoutTimer;
+  late StreamSubscription<GameState> _engineSub;
 
   @override
   void initState() {
@@ -744,29 +962,239 @@ class _FailureAnimationOverlayState extends State<_FailureAnimationOverlay>
       vsync: this,
       duration: const Duration(milliseconds: 3000),
     );
-    _controller.forward();
+    
+    _buttonController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+    
+    _waitingPulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    
+    // ✅ NEW: Restarting animation (green arrow scale + pulse)
+    _restartingController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+    
+    // Listen to engine state for peer retry updates AND restarting phase
+    _engineSub = widget.engine.states.listen((state) {
+      if (mounted) {
+        // Restarting phase: yeşil ok göster, timer'ı iptal et
+        if (state.phase == GamePhase.restarting && !_isRestarting) {
+          _gsLog('[FAILURE-OVERLAY] 🚀 RESTARTING phase detected - showing green arrow!');
+          _isRestarting = true;
+          _timeoutTimer?.cancel();
+          _restartingController.forward();
+        }
+
+        // Peer retry bastı: local'e taze 10 saniye ver.
+        // Peer göstergesi (pulsing dot) zaten ekranda belirir; bu timer yeniden
+        // başlatma, local kullanıcının o göstergeye tepki vermesi için süre tanır.
+        if (widget.engine.peerRetryIntent &&
+            !_peerRetryHandled &&
+            _animationComplete &&
+            !widget.engine.localRetryIntent &&
+            !_isRestarting) {
+          _peerRetryHandled = true;
+          _timeoutTimer?.cancel();
+          _gsLog('[FAILURE-OVERLAY] 👥 Peer retry geldi - 10s timer yenilendi');
+          _timeoutTimer = Timer(const Duration(seconds: 10), () {
+            if (mounted && !widget.engine.localRetryIntent) {
+              _gsLog('[FAILURE-OVERLAY] ⏱️ Uzatılmış süre doldu - tam reset');
+              widget.onTimeout();
+            }
+          });
+        }
+
+        setState(() {});
+      }
+    });
+
+    _controller.forward().then((_) {
+      if (mounted) {
+        setState(() => _animationComplete = true);
+        _buttonController.forward();
+
+        // Local kullanıcı retry basmadıysa 10 saniye sonra sıfırla.
+        // Peer retry bastıysa _engineSub listener timer'ı yeniden başlatır.
+        _timeoutTimer = Timer(const Duration(seconds: 10), () {
+          if (mounted && !widget.engine.localRetryIntent) {
+            _gsLog('[FAILURE-OVERLAY] ⏱️ 10 saniye geçti - tam reset');
+            widget.onTimeout();
+          }
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _buttonController.dispose();
+    _waitingPulseController.dispose();
+    _restartingController.dispose();
+    _timeoutTimer?.cancel();
+    _engineSub.cancel();
     super.dispose();
+  }
+  
+  void _onRetryPressed() {
+    if (widget.engine.localRetryIntent) return; // Already pressed
+    
+    _gsLog('[FAILURE-OVERLAY] 🔄 Retry button pressed - sending intent');
+    _timeoutTimer?.cancel(); // Cancel timeout - user is engaged
+    widget.engine.sendRetryIntent();
+    setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black.withOpacity(0.9),
-      child: Center(
-        child: AnimatedBuilder(
-          animation: _controller,
-          builder: (context, child) {
-            return CustomPaint(
-              painter: _FailureAnimationPainter(animation: _controller),
-            );
-          },
-        ),
+    // ✅ NEW: When restarting, show green triangle (like radar match animation)
+    if (_isRestarting) {
+      return AnimatedBuilder(
+        animation: _restartingController,
+        builder: (context, child) {
+          // ✅ Scale in with elastic effect, then fade out via AnimatedSwitcher
+          return Material(
+            color: InkPlum.base,
+            child: Center(
+              child: Transform.scale(
+                scale: Curves.elasticOut.transform(_restartingController.value),
+                child: const CustomPaint(
+                  size: Size(120, 120),
+                  painter: _GreenTrianglePainter(
+                    opacity: 1.0,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    }
+    
+    return GestureDetector(
+      // Herhangi bir yere uzun basınca ana eşleşme ekranına dön.
+      onLongPress: () {
+        _gsLog('[FAILURE-OVERLAY] 👆 Long press - ana ekrana dönülüyor');
+        _timeoutTimer?.cancel();
+        widget.onTimeout();
+      },
+      child: Material(
+      color: InkPlum.base,
+      child: Stack(
+        children: [
+          // Failure animation
+          Center(
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, child) {
+                return CustomPaint(
+                  painter: _FailureAnimationPainter(animation: _controller),
+                );
+              },
+            ),
+          ),
+          
+          // ✅ Retry button (appears after animation)
+          if (_animationComplete)
+            Positioned(
+              bottom: 80,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: FadeTransition(
+                  opacity: _buttonController,
+                  child: ScaleTransition(
+                    scale: CurvedAnimation(
+                      parent: _buttonController,
+                      curve: Curves.elasticOut,
+                    ),
+                    // Retry butonu alanına uzun basınca dış GestureDetector'ın
+                    // onLongPress'i (hard reset) tetiklenmesin diye absorb ediyoruz.
+                    child: GestureDetector(
+                      onLongPress: () {},
+                      child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // ✅ Peer waiting indicator (if peer pressed but not us)
+                        if (widget.engine.peerRetryIntent && !widget.engine.localRetryIntent)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            child: AnimatedBuilder(
+                              animation: _waitingPulseController,
+                              builder: (context, child) {
+                                return Container(
+                                  width: 12,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: GameColors.retryActive.withValues(
+                                      alpha: 0.5 + _waitingPulseController.value * 0.5,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: GameColors.retryActive.withValues(alpha: 0.4),
+                                        blurRadius: 8,
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+
+                        GestureDetector(
+                          onTap: _onRetryPressed,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 300),
+                            width: 72,
+                            height: 72,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: widget.engine.localRetryIntent
+                                  ? GameColors.retryActive.withValues(alpha: 0.3)
+                                  : GameColors.interactiveLight.withValues(alpha: 0.15),
+                              border: Border.all(
+                                color: widget.engine.localRetryIntent
+                                    ? GameColors.retryActive.withValues(alpha: 0.8)
+                                    : GameColors.borderLight,
+                                width: 2,
+                              ),
+                            ),
+                            child: widget.engine.localRetryIntent
+                                ? AnimatedBuilder(
+                                    animation: _waitingPulseController,
+                                    builder: (context, child) {
+                                      return Icon(
+                                        Icons.check_rounded,
+                                        color: GameColors.retryActive.withValues(
+                                          alpha: 0.7 + _waitingPulseController.value * 0.3,
+                                        ),
+                                        size: 36,
+                                      );
+                                    },
+                                  )
+                                : Icon(
+                                    Icons.refresh_rounded,
+                                    color: GameColors.interactiveLight.withValues(alpha: GameColors.opacityHigh),
+                                    size: 36,
+                                  ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    ), // GestureDetector (long-press absorber)
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
+    ),
     );
   }
 }
@@ -781,10 +1209,11 @@ class _FailureAnimationPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final t = (animation.value).clamp(0.0, 1.0);
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = 80.0;
+    const radius = 80.0;
 
-    final primaryColor = Colors.red.shade900;
-    final accentColor = Colors.orange.shade800;
+    // ✅ Failure colors: Ink Plum compatible
+    const primaryColor = GameColors.failurePrimary;
+    const accentColor = GameColors.failureAccent;
 
     // Phase 1: Glow pulse (0.0 - 0.4)
     if (t < 0.4) {
@@ -793,7 +1222,7 @@ class _FailureAnimationPainter extends CustomPainter {
       final glowRadius = (lerpDouble(0, radius * 1.5, glowT) ?? 0.0).clamp(0.0, double.infinity);
 
       final glowPaint = Paint()
-        ..color = primaryColor.withOpacity(glowOpacity * 0.5)
+        ..color = primaryColor.withValues(alpha: glowOpacity * 0.5)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, glowRadius * 2);
       canvas.drawCircle(center, glowRadius, glowPaint);
     }
@@ -803,15 +1232,15 @@ class _FailureAnimationPainter extends CustomPainter {
       final ringT = ((t - 0.2) / 0.55).clamp(0.0, 1.0);
       final easeT = Curves.easeInOut.transform(ringT);
 
-      final ring1Start = radius * 1.5;
-      final ring2Start = radius * 1.8;
+      const ring1Start = radius * 1.5;
+      const ring2Start = radius * 1.8;
       final ring1Radius = lerpDouble(ring1Start, 0, easeT)!;
       final ring2Radius = lerpDouble(ring2Start, 0, easeT)!;
 
       final ringOpacity = lerpDouble(0.1, 1.0, ringT)!;
 
       final ringPaint = Paint()
-        ..color = primaryColor.withOpacity(ringOpacity)
+        ..color = primaryColor.withValues(alpha: ringOpacity)
         ..style = PaintingStyle.stroke
         ..strokeWidth = lerpDouble(3.0, 16.0, ringT)!
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, lerpDouble(6.0, 20.0, ringT)!);
@@ -829,7 +1258,7 @@ class _FailureAnimationPainter extends CustomPainter {
         final mergeOpacity = lerpDouble(0.0, 0.8, mergeT)!;
 
         final mergePaint = Paint()
-          ..color = accentColor.withOpacity(mergeOpacity)
+          ..color = accentColor.withValues(alpha: mergeOpacity)
           ..maskFilter = MaskFilter.blur(BlurStyle.normal, mergeRadius * 1.2);
         canvas.drawCircle(center, mergeRadius, mergePaint);
       }
@@ -842,16 +1271,16 @@ class _FailureAnimationPainter extends CustomPainter {
       final fadeRadius = lerpDouble(radius * 0.4, radius * 0.8, fadeT)!;
 
       final fadePaint = Paint()
-        ..color = primaryColor.withOpacity(fadeOpacity)
+        ..color = primaryColor.withValues(alpha: fadeOpacity)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, fadeRadius * 0.8);
       canvas.drawCircle(center, fadeRadius, fadePaint);
 
       final pulseWave = math.sin(fadeT * math.pi * 2) * 0.2;
-      final xOpacity = 0.95;
+      const xOpacity = 0.95;
       final xRadius = radius * (0.25 + fadeT * 0.2 + pulseWave);
 
       final paint = Paint()
-        ..color = Colors.red.shade400.withOpacity(xOpacity)
+        ..color = GameColors.failureGlow.withValues(alpha: xOpacity)
         ..strokeWidth = xRadius * 0.25
         ..strokeCap = StrokeCap.round
         ..style = PaintingStyle.stroke;
@@ -867,4 +1296,53 @@ class _FailureAnimationPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _FailureAnimationPainter oldDelegate) => true;
+}
+
+// ✅ NEW: Green triangle painter for restart animation (matches radar screen)
+class _GreenTrianglePainter extends CustomPainter {
+  final double opacity;
+
+  const _GreenTrianglePainter({
+    this.opacity = 1.0,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final centerX = w * 0.5;
+    final centerY = h * 0.5;
+
+    // Main upward-pointing triangle (same as radar screen)
+    final arrowPath = Path();
+    arrowPath.moveTo(centerX, centerY - h * 0.35); // Top point
+    arrowPath.lineTo(centerX + w * 0.35, centerY + h * 0.25); // Bottom right
+    arrowPath.lineTo(centerX - w * 0.35, centerY + h * 0.25); // Bottom left
+    arrowPath.close();
+
+    // Notch cutout
+    final notchPath = Path();
+    notchPath.moveTo(centerX - w * 0.20, centerY + h * 0.22);
+    notchPath.lineTo(centerX + w * 0.20, centerY + h * 0.22);
+    notchPath.lineTo(centerX, centerY + h * 0.35);
+    notchPath.close();
+
+    // Combined path with cutout
+    final combinedPath = Path();
+    combinedPath.fillType = PathFillType.evenOdd;
+    combinedPath.addPath(arrowPath, Offset.zero);
+    combinedPath.addPath(notchPath, Offset.zero);
+
+    // Draw the green triangle
+    final paint = Paint()
+      ..color = GameColors.lime.withValues(alpha: opacity)
+      ..style = PaintingStyle.fill;
+    
+    canvas.drawPath(combinedPath, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _GreenTrianglePainter oldDelegate) {
+    return oldDelegate.opacity != opacity;
+  }
 }

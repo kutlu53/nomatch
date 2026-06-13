@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:developer' as dev;
 
 import 'package:flutter/material.dart';
 
@@ -71,14 +70,20 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    // ✅ Cancel stream subscriptions
     _pairingStateSub?.cancel();
     _flatSub?.cancel();
-    _sensorManager.dispose();
+    
+    // ✅ Dispose sensor manager (async - but fire and forget is ok in dispose)
+    unawaited(_sensorManager.dispose());
+    
+    // ✅ Dispose pairing manager
+    unawaited(widget.pairingManager.dispose());
+    
     super.dispose();
   }
 
   Future<void> _startSensors() async {
-    print('[SHELL] 📡 Starting sensors...');
     await _sensorManager.start();
   }
 

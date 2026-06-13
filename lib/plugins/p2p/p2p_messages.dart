@@ -290,12 +290,14 @@ class GameStartMessage extends P2pMessage {
   final String sid;
   final int? startAtMs;
   final int? seed; // ✅ NEW: Shuffle seed for deterministic question order
+  final String? leaderId; // ✅ NEW: Leader's actual device ID for conflict resolution
 
   GameStartMessage({
     this.v = 1,
     required this.sid,
     this.startAtMs,
     this.seed,
+    this.leaderId,
   });
 
   @override
@@ -310,6 +312,7 @@ class GameStartMessage extends P2pMessage {
       'ts': DateTime.now().millisecondsSinceEpoch,
       if (startAtMs != null) 'startAtMs': startAtMs,
       if (seed != null) 'seed': seed, // ✅ NEW
+      if (leaderId != null) 'leaderId': leaderId, // ✅ NEW
     };
   }
 
@@ -319,6 +322,7 @@ class GameStartMessage extends P2pMessage {
       sid: json['sid'] ?? '',
       startAtMs: json['startAtMs'] as int?,
       seed: json['seed'] as int?, // ✅ NEW
+      leaderId: json['leaderId'] as String?, // ✅ NEW
     );
   }
 }
@@ -465,5 +469,29 @@ class ErrorMessage extends P2pMessage {
       error: json['error'] ?? '',
       code: json['code'] ?? json['error'] ?? '',
     );
+  }
+}
+
+/// ✅ NEW: Retry intent message for game restart handshake
+class RetryIntentMessage extends P2pMessage {
+  final String sid;
+
+  RetryIntentMessage({required this.sid});
+
+  @override
+  String get messageType => 'retry_intent';
+
+  @override
+  Map<String, dynamic> toJson() {
+    return {
+      'v': 1,
+      'sid': sid,
+      't': messageType,
+      'ts': DateTime.now().millisecondsSinceEpoch,
+    };
+  }
+
+  factory RetryIntentMessage.fromJson(Map<String, dynamic> json) {
+    return RetryIntentMessage(sid: json['sid'] ?? '');
   }
 }

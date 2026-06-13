@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:sensors_plus/sensors_plus.dart';
+import '../core/debug_config.dart';
 
 /// Manages device sensors (accelerometer) to detect if phone is flat
 class SensorManager {
@@ -19,7 +20,7 @@ class SensorManager {
 
   /// Start listening to accelerometer
   Future<void> start() async {
-    print('[SENSOR] 📱 Starting sensor manager (throttled to ${1000 ~/ _throttleMs} Hz)');
+    sensorLog('📱 Starting sensor manager (throttled to ${1000 ~/ _throttleMs} Hz)');
     
     _accelerometerSub = accelerometerEvents.listen((event) {
       // ✅ OPTIMIZATION: Throttle sensor events to reduce CPU load
@@ -57,7 +58,7 @@ class SensorManager {
 
   /// Stop listening
   Future<void> stop() async {
-    print('[SENSOR] 🛑 Stopping sensor manager');
+    sensorLog('🛑 Stopping sensor manager');
     await _accelerometerSub?.cancel();
   }
 

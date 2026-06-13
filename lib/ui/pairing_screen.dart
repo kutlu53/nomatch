@@ -49,6 +49,7 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
   StreamSubscription<List<DiscoveredPeer>>? _discoveredPeersSub;
   StreamSubscription<bool>? _pendingRequestsSub;
   StreamSubscription<NomatchNotificationType>? _notifTapSub;
+  StreamSubscription<void>? _headingRetrySub;
   List<DiscoveredPeer> _discoveredPeers = [];
   bool _isPublicModeScanning = false;
   bool _hasPendingPublicRequest = false;
@@ -57,6 +58,11 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
   // async operasyonları önlemek için debounce + versiyon sayacı.
   Timer? _modeSwitchDebounce;
   int _modeSwitchVersion = 0;
+  // ✅ BLE start/stop operasyonlarını sıraya koyar — bir önceki operasyon
+  // (örn. startDiscoveryOnly) bitmeden bir sonraki (örn. stop) başlamaz.
+  // Aksi halde geç tamamlanan eski operasyon, yeni operasyonun BLE
+  // durumunu üzerine yazabilir (bkz. _switchToPublicMode/_switchToRadarMode).
+  Future<void> _modeSwitchOperation = Future.value();
   
   // Match animation controller (400ms fade out)
   late final AnimationController _matchController;
@@ -71,11 +77,19 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
   late final Animation<double> _radarScaleAnim;
   late final Animation<double> _transitionFadeAnim;
 
+  // ✅ Heading doğrulaması retry uyarısı: kısa kırmızımsı pulse (400ms)
+  late final AnimationController _headingAlertController;
+  late final Animation<double> _headingAlertAnimation;
+
   @override
   void initState() {
     super.initState();
-    
-    _pageController = PageController(initialPage: 0);
+
+    // ✅ Oyun/hata sonrası ekran yeniden oluşturulduğunda, kullanıcı public
+    // transport modundaysa o sayfada kal — radar sayfasına geri atma.
+    final startOnPublicPage = widget.pairingManager.lastSessionWasPublic;
+    _currentPage = startOnPublicPage ? 1 : 0;
+    _pageController = PageController(initialPage: _currentPage);
     _pageController.addListener(_onPageScroll);
     
     // Subscribe to discovered peers for public transport mode
@@ -137,6 +151,36 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
     _transitionFadeAnim = Tween<double>(begin: 1.0, end: 0.0).animate(
       CurvedAnimation(parent: _gameTransitionController, curve: Curves.easeIn),
     );
+
+    // ✅ Heading retry uyarı pulse'ı: hızlı yanıp sönen kırmızımsı halka
+    _headingAlertController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
+    _headingAlertAnimation = TweenSequence<double>([
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 0.0, end: 1.0).chain(CurveTween(curve: Curves.easeOut)),
+        weight: 30,
+      ),
+      TweenSequenceItem(
+        tween: Tween<double>(begin: 1.0, end: 0.0).chain(CurveTween(curve: Curves.easeIn)),
+        weight: 70,
+      ),
+    ]).animate(_headingAlertController);
+
+    // Heading doğrulaması başarısız olup retry edildiğinde kısa pulse göster
+    _headingRetrySub = widget.pairingManager.headingRetryEvents.listen((_) {
+      if (mounted) _headingAlertController.forward(from: 0.0);
+    });
+
+    // Public sayfasıyla başlıyorsak BLE discovery'yi de hemen başlat
+    // (normal swipe akışında bunu _onPageChanged/_switchToPublicMode yapar).
+    if (startOnPublicPage) {
+      _isPublicModeScanning = true;
+      _screenState = ScreenState.scanning;
+      widget.pairingManager.setPublicMode(true);
+      widget.pairingManager.startDiscoveryOnly();
+    }
   }
 
   @override
@@ -145,11 +189,13 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
     _pageController.dispose();
     _matchController.dispose();
     _gameTransitionController.dispose();
+    _headingAlertController.dispose();
     _flashlight.dispose();
     _modeSwitchDebounce?.cancel();
     _discoveredPeersSub?.cancel();
     _pendingRequestsSub?.cancel();
     _notifTapSub?.cancel();
+    _headingRetrySub?.cancel();
     super.dispose();
   }
   
@@ -197,25 +243,36 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
 
   /// Switch to public transport mode - auto-start BLE discovery
   Future<void> _switchToPublicMode(int version) async {
-    dev.log('[MODE] Switching to Public mode - auto-starting BLE');
     _isPublicModeScanning = true;
     // setPublicMode(true) zaten _onPageChanged'da çağrıldı
     setState(() => _screenState = ScreenState.scanning);
-    await widget.pairingManager.startDiscoveryOnly();
-    // Geçiş tamamlanmadan başka bir swipe geldiyse sonucu unut
-    if (!mounted || _modeSwitchVersion != version) return;
+    // Önceki mod geçişi (örn. stop()) tamamlanmadan BLE'yi başlatma —
+    // aksi halde geç tamamlanan eski operasyon yeni BLE durumunu ezebilir.
+    final previous = _modeSwitchOperation;
+    _modeSwitchOperation = previous.then((_) async {
+      if (!mounted || _modeSwitchVersion != version) return;
+      dev.log('[MODE] Switching to Public mode - auto-starting BLE');
+      await widget.pairingManager.startDiscoveryOnly();
+    });
+    await _modeSwitchOperation;
   }
 
   /// Switch to radar mode - stop BLE
   Future<void> _switchToRadarMode(int version) async {
-    dev.log('[MODE] Switching to Radar mode - stopping BLE');
     // setPublicMode(false) zaten _onPageChanged'da çağrıldı
     setState(() {
       _screenState = ScreenState.idle;
       _discoveredPeers = [];
     });
-    await widget.pairingManager.stop();
-    if (!mounted || _modeSwitchVersion != version) return;
+    // Önceki mod geçişi (örn. startDiscoveryOnly) tamamlanmadan stop() çağırma —
+    // aksi halde geç tamamlanan eski operasyon BLE'yi yeniden başlatabilir.
+    final previous = _modeSwitchOperation;
+    _modeSwitchOperation = previous.then((_) async {
+      if (!mounted || _modeSwitchVersion != version) return;
+      dev.log('[MODE] Switching to Radar mode - stopping BLE');
+      await widget.pairingManager.stop();
+    });
+    await _modeSwitchOperation;
   }
   
   /// Trigger the match animation sequence
@@ -311,6 +368,16 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
       retries++;
       await Future.delayed(const Duration(milliseconds: 500));
     }
+
+    // ✅ 20 deneme de başarısız oldu (ör. telefon hiç düz konmadı veya BLE
+    // başlatılamadı): ekran "scanning" durumunda asılı kalmasın, başlangıç
+    // üçgenine geri dön. stop() olası yarım kalmış state/BLE'yi de temizler.
+    if (!success && mounted && _screenState == ScreenState.scanning) {
+      await widget.pairingManager.stop();
+      if (mounted) {
+        setState(() => _screenState = ScreenState.idle);
+      }
+    }
   }
 
   @override
@@ -368,7 +435,7 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
     required bool showScanContent,
   }) {
     return AnimatedBuilder(
-      animation: Listenable.merge([_matchController, _gameTransitionController]),
+      animation: Listenable.merge([_matchController, _gameTransitionController, _headingAlertController]),
       builder: (context, child) {
         final triangleScale = isMatched ? _triangleScaleAnim.value : 1.0;
         final triangleOpacity = isMatched ? _triangleOpacityAnim.value : 1.0;
@@ -377,26 +444,26 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
         final transitionOpacity = isTransitioning ? _transitionFadeAnim.value : 1.0;
 
         return Stack(
+          clipBehavior: Clip.hardEdge,
           children: [
             // Layer 1: Radar
             if (showScanContent)
               Positioned.fill(
-                child: Transform.scale(
-                  scale: radarScale,
-                  child: Opacity(
-                    opacity: isTransitioning ? transitionOpacity : 1.0,
-                    child: RadarPairingView(
-                      peers: const [],
-                      focusCandidatePeerId: widget.pairingManager.peerId,
-                      readySoon: pairingState == PairingState.hostingReady,
-                      focusCandidateLocked: pairingState == PairingState.preConnected,
-                      pairHandshakeComplete: pairingState == PairingState.connected,
-                      isConnectingTransition: pairingState == PairingState.preConnected,
-                      localHeadingDeg: state.ourHeading,
-                      validationFailed: pairingState == PairingState.failed,
-                      isScanning: isScanning,
-                      collapseProgress: 0.0,
-                      freezeOpacity: radarOpacity,
+                child: ClipRect(
+                  child: Transform.scale(
+                    scale: radarScale,
+                    child: Opacity(
+                      opacity: isTransitioning ? transitionOpacity : 1.0,
+                      child: RadarPairingView(
+                        focusCandidatePeerId: widget.pairingManager.peerId,
+                        focusCandidateLocked: pairingState == PairingState.preConnected,
+                        pairHandshakeComplete: pairingState == PairingState.connected,
+                        isConnectingTransition: pairingState == PairingState.preConnected,
+                        isScanning: isScanning,
+                        collapseProgress: 0.0,
+                        freezeOpacity: radarOpacity,
+                        alertOpacity: _headingAlertAnimation.value,
+                      ),
                     ),
                   ),
                 ),
