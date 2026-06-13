@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/pairing_manager.dart';
 import '../../theme/game_colors.dart';
+import '../radar/radar_rings_painter.dart';
 
 /// Ice Silver color - same as triangle color in radar mode
 const Color _circleColor = Color(0xFFEDEBFF);
@@ -36,13 +37,17 @@ class PublicPairingView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
-    final circleSize = screenSize.width * 0.65 * 0.25; // %75 küçültüldü
+    // Radar modundaki ilk (en içteki) halka ile aynı boyut: maxRadius * 0.25, maxRadius = min(w,h) * 0.42
+    final circleSize = math.min(screenSize.width, screenSize.height) * 0.21;
     final logoSize = circleSize * 0.85; // Logo fills most of the circle
     final center = Offset(screenSize.width / 2, screenSize.height / 2);
     
     return Stack(
       clipBehavior: Clip.hardEdge, // ✅ Prevent any overflow from rendering outside
       children: [
+        // Radar modundaki halkalarla aynı görünüm
+        RadarRingsWidget(isScanning: isScanning),
+
         // Peer dots (behind the logo circle)
         ...discoveredPeers.asMap().entries.map((entry) {
           final peer = entry.value;

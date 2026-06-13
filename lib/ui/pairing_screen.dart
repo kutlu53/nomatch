@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'dart:developer' as dev;
 
@@ -396,10 +397,16 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: PageView(
+      body: ScrollConfiguration(
+        behavior: ScrollConfiguration.of(context).copyWith(
+          dragDevices: {
+            ...PointerDeviceKind.values,
+          },
+        ),
+        child: PageView(
         controller: _pageController,
-        physics: canSwipe 
-            ? const BouncingScrollPhysics() 
+        physics: canSwipe
+            ? const BouncingScrollPhysics()
             : const NeverScrollableScrollPhysics(),
         onPageChanged: _onPageChanged,
         children: [
@@ -420,6 +427,7 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
             isPhoneFlat: state.isPhoneFlat,
           ),
         ],
+        ),
       ),
     );
   }

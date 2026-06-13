@@ -3,8 +3,6 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 
-import '../radar/radar_rings_painter.dart';
-
 class RadarPairingView extends StatefulWidget {
   final String? focusCandidatePeerId;
   final bool focusCandidateLocked;
@@ -106,14 +104,6 @@ class _RadarPairingViewState extends State<RadarPairingView> with TickerProvider
       child: SizedBox.expand(
         child: Stack(
           children: [
-            // ✅ Minimal radar rings with breathing/scanning/collapse animation
-            RadarRingsWidget(
-              isScanning: widget.isScanning,
-              collapseProgress: widget.collapseProgress,
-              freezeOpacity: widget.freezeOpacity,
-              alertOpacity: widget.alertOpacity,
-            ),
-
             // Bağlantı durumuna göre merkez spinner
             SizedBox.expand(
               child: CustomPaint(
