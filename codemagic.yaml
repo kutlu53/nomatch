@@ -14,6 +14,13 @@ workflows:
         script: |
           cd build/ios/iphonesimulator
           zip -r Runner.app.zip Runner.app
+      - name: Check Appetize token
+        script: |
+          if [ -z "$APPETIZE_API_TOKEN" ]; then
+            echo "APPETIZE_API_TOKEN is NOT set in this workflow's environment."
+          else
+            echo "APPETIZE_API_TOKEN is set, length=${#APPETIZE_API_TOKEN}, starts with: ${APPETIZE_API_TOKEN:0:4}..., ends with: ...${APPETIZE_API_TOKEN: -4}"
+          fi
       - name: Upload to Appetize.io
         script: |
           curl https://api.appetize.io/v1/apps \
