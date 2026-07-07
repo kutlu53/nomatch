@@ -5,6 +5,8 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../theme/game_colors.dart';
 import '../../theme/app_background.dart';
+import '../../theme/design_tokens.dart';
+import '../../ui/widgets/brand_indicators.dart';
 import 'game_engine.dart';
 import 'game_state.dart';
 
@@ -112,7 +114,7 @@ class _GameShareScreenState extends State<GameShareScreen>
     // Animations
     _slideController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 400),
+      duration: Motion.slow,
     );
 
     _slideAnimation = Tween<Offset>(
@@ -368,7 +370,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                   Expanded(
                     child: AnimatedOpacity(
                       opacity: _hasShared ? 0.3 : 1.0,
-                      duration: const Duration(milliseconds: 400),
+                      duration: Motion.slow,
                       child: GestureDetector(
                       onTapDown: (_) {
                         HapticFeedback.lightImpact();
@@ -397,7 +399,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                                 : 1.0,
                             duration: const Duration(milliseconds: 100),
                             child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 300),
+                              duration: Motion.base,
                               width: 140,
                               height: 140,
                               decoration: BoxDecoration(
@@ -427,7 +429,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                                   scale: _selectedShareKind == ShareKind.phone
                                       ? 1.15
                                       : 1.0,
-                                  duration: const Duration(milliseconds: 300),
+                                  duration: Motion.base,
                                   child: SvgPicture.asset(
                                     'assets/branding/whatsapp-icon.svg',
                                     width: 70,
@@ -459,12 +461,12 @@ class _GameShareScreenState extends State<GameShareScreen>
                             height: 10,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: GameColors.lime.withOpacity(
+                              color: GameColors.lime.withValues(alpha: 
                                 0.35 + _waitingPulseController.value * 0.65,
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: GameColors.lime.withOpacity(
+                                  color: GameColors.lime.withValues(alpha: 
                                     0.2 + _waitingPulseController.value * 0.4,
                                   ),
                                   blurRadius: 8,
@@ -486,32 +488,26 @@ class _GameShareScreenState extends State<GameShareScreen>
                       child: Container(
                       height: 200,
                       decoration: BoxDecoration(
-                        color: InkPlum.surface.withOpacity(0.8),
+                        color: InkPlum.surface.withValues(alpha: 0.8),
                       ),
                       child: SlideTransition(
                         position: _slideAnimation,
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 32),
+                          padding: const EdgeInsets.symmetric(horizontal: Space.xl),
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               // ✅ Input field
                               Container(
                                 decoration: BoxDecoration(
-                                  color: GameColors.interactiveLight.withOpacity(0.95),
-                                  borderRadius: BorderRadius.circular(24),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: InkPlum.edge.withOpacity(0.4),
-                                      blurRadius: 20,
-                                      offset: const Offset(0, 8),
-                                    ),
-                                  ],
+                                  color: GameColors.interactiveLight.withValues(alpha: 0.95),
+                                  borderRadius: Radii.brMd,
+                                  boxShadow: Elevation.e2,
                                 ),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
-                                    horizontal: 24,
-                                    vertical: 16,
+                                    horizontal: Space.lg,
+                                    vertical: Space.md,
                                   ),
                                   child: Row(
                                     children: [
@@ -519,7 +515,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                                         Text(
                                           _prefix,
                                           style: TextStyle(
-                                            color: InkPlum.base.withOpacity(0.5),
+                                            color: InkPlum.base.withValues(alpha: 0.5),
                                             fontSize: 18,
                                             fontWeight: FontWeight.w500,
                                           ),
@@ -543,7 +539,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                                             border: InputBorder.none,
                                             hintText: _placeholder,
                                             hintStyle: TextStyle(
-                                              color: InkPlum.base.withOpacity(0.35),
+                                              color: InkPlum.base.withValues(alpha: 0.35),
                                               fontWeight: FontWeight.w500,
                                             ),
                                           ),
@@ -559,7 +555,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                                 ),
                               ),
 
-                              const SizedBox(height: 24),
+                              const SizedBox(height: Space.lg),
 
                               // ✅ Send button (yazısız arrow)
                               GestureDetector(
@@ -572,16 +568,16 @@ class _GameShareScreenState extends State<GameShareScreen>
                                     shape: BoxShape.circle,
                                     boxShadow: [
                                       BoxShadow(
-                                        color: GameColors.purple.withOpacity(0.3),
+                                        color: GameColors.purple.withValues(alpha: 0.3),
                                         blurRadius: 20,
                                         offset: const Offset(0, 8),
                                       ),
                                     ],
                                   ),
-                                  child: const Icon(
-                                    Icons.arrow_forward_rounded,
-                                    color: GameColors.purple,
-                                    size: 32,
+                                  child: const CustomPaint(
+                                    size: Size(32, 32),
+                                    painter: _SendArrowPainter(
+                                        color: GameColors.purple),
                                   ),
                                 ),
                               ),
@@ -596,7 +592,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                   Expanded(
                     child: AnimatedOpacity(
                       opacity: _hasShared ? 0.3 : 1.0,
-                      duration: const Duration(milliseconds: 400),
+                      duration: Motion.slow,
                       child: GestureDetector(
                       onTapDown: (_) {
                         HapticFeedback.lightImpact();
@@ -621,7 +617,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                                 : 1.0,
                             duration: const Duration(milliseconds: 100),
                             child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 300),
+                              duration: Motion.base,
                               width: 140,
                               height: 140,
                               decoration: BoxDecoration(
@@ -651,7 +647,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                                   scale: _selectedShareKind == ShareKind.social
                                       ? 1.15
                                       : 1.0,
-                                  duration: const Duration(milliseconds: 300),
+                                  duration: Motion.base,
                                   child: SvgPicture.asset(
                                     'assets/branding/instagram-icon.svg',
                                     width: 70,
@@ -685,7 +681,7 @@ class _GameShareScreenState extends State<GameShareScreen>
                       return Container(
                         decoration: BoxDecoration(
                           border: Border.all(
-                            color: GameColors.reconnecting.withOpacity(0.3 + (pulse * 0.5)),
+                            color: GameColors.reconnecting.withValues(alpha: 0.3 + (pulse * 0.5)),
                             width: 4 + (pulse * 2),
                           ),
                         ),
@@ -872,13 +868,13 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
                   onTap: _openLink,
                   onDoubleTap: _copyToClipboard, // Çift tıkla kopyala
                   child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+                    duration: Motion.fast,
+                    padding: const EdgeInsets.symmetric(horizontal: Space.xl, vertical: Space.lg),
                     decoration: BoxDecoration(
-                      color: InkPlum.surface.withOpacity(_copied ? 0.9 : 0.6),
-                      borderRadius: BorderRadius.circular(24),
+                      color: InkPlum.surface.withValues(alpha: _copied ? 0.9 : 0.6),
+                      borderRadius: Radii.brMd,
                       border: Border.all(
-                        color: _copied ? GameColors.lime.withOpacity(0.6) : GameColors.borderSubtle,
+                        color: _copied ? GameColors.lime.withValues(alpha: 0.6) : GameColors.borderSubtle,
                         width: 2,
                       ),
                     ),
@@ -899,7 +895,7 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
                                 color: (widget.peerShareKind == ShareKind.phone
                                         ? const Color(0xFF25D366)
                                         : const Color(0xFFE4405F))
-                                    .withOpacity(0.4),
+                                    .withValues(alpha: 0.4),
                                 blurRadius: 20,
                                 offset: const Offset(0, 8),
                               ),
@@ -920,7 +916,7 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
                           ),
                         ),
                         
-                        const SizedBox(height: 24),
+                        const SizedBox(height: Space.lg),
                         
                         // ✅ Bilgi (telefon veya kullanıcı adı)
                         Text(
@@ -947,17 +943,10 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
                   child: Center(
                     child: AnimatedBuilder(
                       animation: _progressController,
-                      builder: (context, _) => SizedBox(
-                        width: 80,
-                        height: 80,
-                        child: CircularProgressIndicator(
-                          value: _progressController.value,
-                          backgroundColor: GameColors.purple.withValues(alpha: 0.2),
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            GameColors.purple.withValues(alpha: 0.8),
-                          ),
-                          strokeWidth: 5,
-                        ),
+                      builder: (context, _) => ProgressRing(
+                        value: _progressController.value,
+                        size: 80,
+                        color: GameColors.purple,
                       ),
                     ),
                   ),
@@ -968,6 +957,38 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
       ),
     );
   }
+}
+
+/// Gönder butonu için markaya uygun ok — Material ikon yerine.
+class _SendArrowPainter extends CustomPainter {
+  final Color color;
+  const _SendArrowPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final cy = h / 2;
+
+    final line = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.0
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    // Gövde çizgisi
+    canvas.drawLine(Offset(w * 0.20, cy), Offset(w * 0.78, cy), line);
+    // Ok ucu (chevron)
+    final head = Path()
+      ..moveTo(w * 0.58, cy - h * 0.16)
+      ..lineTo(w * 0.78, cy)
+      ..lineTo(w * 0.58, cy + h * 0.16);
+    canvas.drawPath(head, line);
+  }
+
+  @override
+  bool shouldRepaint(covariant _SendArrowPainter old) => old.color != color;
 }
 
 /// Share Kind enum

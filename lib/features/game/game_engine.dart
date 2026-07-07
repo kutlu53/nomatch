@@ -489,8 +489,10 @@ final class GameEngine {
         return;
       case ErrorMessage():
         dev.log("ENGINE: Processing ErrorMessage (code=${msg.code})");
-        _setState(_state.copyWith(lastErrorCode: msg.code));
+        // ✅ FIX: Önce reset, sonra kodu ayarla. Aksi halde _resetToPairing
+        // initial state ile lastErrorCode'u null'a ezip hata kodunu kaybediyordu.
         _resetToPairing();
+        _setState(_state.copyWith(lastErrorCode: msg.code));
       case HelloMessage():
         return;
       

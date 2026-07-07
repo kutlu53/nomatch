@@ -28,60 +28,64 @@ class GameColors {
   
   // ─────────────────────────────────────────────────────────────────────────────
   // CHOICE INDICATORS (Top/Bottom selection)
+  // Marka moruyla ilişkili serin/sıcak bir çift — birbirinden net ayrışır.
   // ─────────────────────────────────────────────────────────────────────────────
-  
-  /// Top choice - cool cyan-violet
-  static const Color choiceTop = Color(0xFF6E8EFF);
-  
-  /// Bottom choice - warm coral-peach
-  static const Color choiceBottom = Color(0xFFFF8C6E);
-  
+
+  /// Top choice - cool periwinkle (mor ailesinden)
+  static const Color choiceTop = Color(0xFF7E93FF);
+
+  /// Bottom choice - warm rose (mor-magenta ucuna doğru)
+  static const Color choiceBottom = Color(0xFFFF8FA6);
+
   /// No selection made - neutral ghost
   static const Color choiceNone = Color(0xFF4A4458);
-  
+
   /// Default/unselected state
   static const Color choiceDefault = Color(0xFF2A2438);
-  
+
   // ─────────────────────────────────────────────────────────────────────────────
   // RESULT STATES (Match outcomes)
+  // Semantikler marka ailesinden türetildi: olumlu=lime, olumsuz=magenta-kızıl.
   // ─────────────────────────────────────────────────────────────────────────────
-  
-  /// Match - harmonious teal-mint
-  static const Color match = Color(0xFF4ECDC4);
-  
-  /// Mismatch - soft rose-coral
-  static const Color mismatch = Color(0xFFFF6B6B);
-  
+
+  /// Match - lime ailesinden olumlu
+  static const Color match = Color(0xFF93D845);
+
+  /// Mismatch - marka moruyla ilişkili gül-kızıl
+  static const Color mismatch = Color(0xFFE24A6A);
+
   /// Local player didn't select - muted amber
-  static const Color localTimeout = Color(0xFFFFBE5C);
-  
-  /// Peer didn't select - soft sky blue
-  static const Color peerTimeout = Color(0xFF5CB8FF);
-  
-  /// Both didn't select - neutral lavender
+  static const Color localTimeout = Color(0xFFE0A94A);
+
+  /// Peer didn't select - periwinkle (choiceTop ile hizalı)
+  static const Color peerTimeout = Color(0xFF7E93FF);
+
+  /// Both didn't select - neutral lavender (mor ailesi)
   static const Color bothTimeout = Color(0xFF8B7FB8);
-  
+
   // ─────────────────────────────────────────────────────────────────────────────
   // TERMINAL ANIMATIONS (Success/Failure)
+  // Başarı lime ailesinden, başarısızlık mor-magenta ailesinden türetildi;
+  // artık Flat-UI emerald/crimson yerine markayla uyumlu.
   // ─────────────────────────────────────────────────────────────────────────────
-  
-  /// Success primary - rich emerald
-  static const Color successPrimary = Color(0xFF2ECC71);
-  
-  /// Success accent - teal harmony
-  static const Color successAccent = Color(0xFF26A69A);
-  
-  /// Success glow - bright mint (for effects)
-  static const Color successGlow = Color(0xFF69F0AE);
-  
-  /// Failure primary - deep crimson
-  static const Color failurePrimary = Color(0xFFE74C3C);
-  
-  /// Failure accent - burnt orange
-  static const Color failureAccent = Color(0xFFD35400);
-  
-  /// Failure glow - soft coral (for effects)
-  static const Color failureGlow = Color(0xFFFF7675);
+
+  /// Success primary - brand green
+  static const Color successPrimary = Color(0xFF93D845);
+
+  /// Success accent - deeper leaf
+  static const Color successAccent = Color(0xFF6FB33A);
+
+  /// Success glow - bright lime (for effects)
+  static const Color successGlow = Color(0xFFC4F94E);
+
+  /// Failure primary - rose-red (mor undertone)
+  static const Color failurePrimary = Color(0xFFE24A6A);
+
+  /// Failure accent - magenta-plum (markaya bağlar)
+  static const Color failureAccent = Color(0xFFA83A7A);
+
+  /// Failure glow - soft rose (for effects)
+  static const Color failureGlow = Color(0xFFFF6E90);
   
   // ─────────────────────────────────────────────────────────────────────────────
   // UI ELEMENTS
@@ -99,11 +103,11 @@ class GameColors {
   /// Border subtle
   static const Color borderSubtle = Color(0x1AFFFFFF);
   
-  /// Reconnecting indicator - warm orange
-  static const Color reconnecting = Color(0xFFFF9F43);
-  
-  /// Retry button active - confirm green
-  static const Color retryActive = Color(0xFF00E676);
+  /// Reconnecting indicator - warm amber (kasıtlı olarak nötr/uyarı tonu)
+  static const Color reconnecting = Color(0xFFFFB454);
+
+  /// Retry button active - lime ailesinden onay
+  static const Color retryActive = Color(0xFFA6E84D);
   
   // ─────────────────────────────────────────────────────────────────────────────
   // OPACITY PRESETS

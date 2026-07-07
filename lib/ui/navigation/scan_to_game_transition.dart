@@ -180,7 +180,7 @@ class _ScanToGameTransitionState extends State<ScanToGameTransition>
               Positioned.fill(
                 child: IgnorePointer(
                   child: Container(
-                    color: Colors.black.withOpacity(_holdDarkenAnim.value),
+                    color: Colors.black.withValues(alpha: _holdDarkenAnim.value),
                   ),
                 ),
               ),

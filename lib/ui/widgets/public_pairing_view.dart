@@ -70,7 +70,7 @@ class PublicPairingView extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: _circleColor.withOpacity(0.6),
+                  color: _circleColor.withValues(alpha: 0.6),
                   width: 2.0,
                 ),
               ),
@@ -180,9 +180,11 @@ class _PeerDotState extends State<_PeerDot> with SingleTickerProviderStateMixin 
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
     
-    // Calculate angle based on peer ID hash (deterministic position)
-    final hash = widget.peer.id.hashCode;
-    final baseAngle = (hash % 360) * (math.pi / 180);
+    // Deterministik ama daha eşit dağılan konum: peer ID hash'ini golden-angle
+    // (≈137.5°) ile çarparak modulo-360 kümelenmesini önle. Aynı ID → aynı açı.
+    const goldenAngle = 2.399963229728653; // radyan (137.507764°)
+    final hash = widget.peer.id.hashCode & 0x7fffffff;
+    final baseAngle = (hash * goldenAngle) % (2 * math.pi);
     
     // Distance from circle: closer RSSI = closer to circle
     final normalizedDist = widget.peer.normalizedDistance;
@@ -232,16 +234,16 @@ class _PeerDotState extends State<_PeerDot> with SingleTickerProviderStateMixin 
                 height: dotSize,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: dotColor.withOpacity(opacity),
+                  color: dotColor.withValues(alpha: opacity),
                   boxShadow: [
                     BoxShadow(
-                      color: dotColor.withOpacity(0.4 * opacity),
+                      color: dotColor.withValues(alpha: 0.4 * opacity),
                       blurRadius: dotSize * 0.8,
                       spreadRadius: isActive ? 4 : 2,
                     ),
                     if (isActive)
                       BoxShadow(
-                        color: dotColor.withOpacity(0.2),
+                        color: dotColor.withValues(alpha: 0.2),
                         blurRadius: dotSize * 1.5,
                         spreadRadius: 8,
                       ),

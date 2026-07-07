@@ -11,6 +11,7 @@ import '../app/pairing_logic.dart';
 import '../features/pairing/flashlight_signal.dart';
 import '../services/notification_service.dart';
 import '../theme/game_colors.dart';
+import '../theme/design_tokens.dart';
 import 'start/start_triangle_button.dart';
 import 'widgets/radar_pairing_view.dart';
 import 'widgets/public_pairing_view.dart';
@@ -116,7 +117,7 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
       if (type == NomatchNotificationType.pairRequest && _currentPage != 1) {
         _pageController.animateToPage(
           1,
-          duration: const Duration(milliseconds: 350),
+          duration: Motion.base,
           curve: Curves.easeOut,
         );
       }
@@ -551,12 +552,12 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
   
   Widget _buildPageDot({required bool isActive, required bool hasNotification}) {
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
+      duration: Motion.fast,
       width: isActive ? 20 : 8,
       height: 8,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(4),
-        color: const Color(0xFFEDEBFF).withOpacity(isActive ? 0.6 : 0.25),
+        borderRadius: Radii.brXs,
+        color: const Color(0xFFEDEBFF).withValues(alpha: isActive ? 0.6 : 0.25),
       ),
     );
   }
@@ -592,9 +593,11 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
   }
   
   Widget _buildFlashlightToggle(bool isPhoneFlat) {
+    // Güvenli alana saygı: notch/Dynamic Island ile çakışmayı önle.
+    final topInset = MediaQuery.of(context).padding.top;
     return Positioned(
-      top: 50,
-      right: 20,
+      top: topInset + Space.md,
+      right: Space.lg,
       child: GestureDetector(
         onTap: isPhoneFlat
           ? () async {
@@ -606,25 +609,38 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
               }
             }
           : null,
-        child: Container(
-          width: 50,
-          height: 50,
+        child: AnimatedContainer(
+          duration: Motion.fast,
+          curve: Motion.standard,
+          width: 52,
+          height: 30,
+          padding: const EdgeInsets.all(3),
           decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(Radii.pill),
+            color: _torchEnabled
+                ? GameColors.lime.withValues(alpha: isPhoneFlat ? 0.9 : 0.3)
+                : const Color(0xFFF5F5F5).withValues(alpha: 0.10),
             border: Border.all(
-              color: const Color(0xFFF5F5F5).withValues(alpha: isPhoneFlat ? 0.8 : 0.3),
-              width: 2,
+              color: const Color(0xFFF5F5F5)
+                  .withValues(alpha: isPhoneFlat ? 0.55 : 0.18),
+              width: 1.5,
             ),
           ),
-          child: Icon(
-            _torchEnabled ? Icons.toggle_on : Icons.toggle_off,
-            color: isPhoneFlat
-                ? (_torchEnabled 
-                    ? const Color(0xFFF5F5F5)
-                    : const Color(0xFFF5F5F5).withValues(alpha: 0.5))
-                : const Color(0xFFF5F5F5).withValues(alpha: 0.2),
-            size: 28,
+          child: AnimatedAlign(
+            duration: Motion.fast,
+            curve: Motion.standard,
+            alignment:
+                _torchEnabled ? Alignment.centerRight : Alignment.centerLeft,
+            child: Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFFF5F5F5).withValues(
+                  alpha: isPhoneFlat ? 1.0 : 0.35,
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -685,11 +701,11 @@ class _PulsingPageDotState extends State<_PulsingPageDot>
             width: widget.isActive ? 20 : 8,
             height: 8,
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(4),
-              color: GameColors.purple.withOpacity(_opacityAnimation.value),
+              borderRadius: Radii.brXs,
+              color: GameColors.purple.withValues(alpha: _opacityAnimation.value),
               boxShadow: [
                 BoxShadow(
-                  color: GameColors.purple.withOpacity(0.4 * _opacityAnimation.value),
+                  color: GameColors.purple.withValues(alpha: 0.4 * _opacityAnimation.value),
                   blurRadius: 8,
                   spreadRadius: 2,
                 ),

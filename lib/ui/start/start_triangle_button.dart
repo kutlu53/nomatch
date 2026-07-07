@@ -316,9 +316,9 @@ class _TrianglePainter extends CustomPainter {
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
           colors: [
-            _sweepHighlightColor.withOpacity(0.0),
-            _sweepHighlightColor.withOpacity(0.20),
-            _sweepHighlightColor.withOpacity(0.0),
+            _sweepHighlightColor.withValues(alpha: 0.0),
+            _sweepHighlightColor.withValues(alpha: 0.20),
+            _sweepHighlightColor.withValues(alpha: 0.0),
           ],
           stops: const [0.0, 0.5, 1.0],
         ).createShader(Rect.fromLTWH(sweepX - bandWidth/2, 0, bandWidth, h));
@@ -333,7 +333,7 @@ class _TrianglePainter extends CustomPainter {
 
     // Main fill
     final paint = Paint()
-      ..color = color.withOpacity(opacity)
+      ..color = color.withValues(alpha: opacity)
       ..style = PaintingStyle.fill;
     canvas.drawPath(combinedPath, paint);
   }
@@ -371,7 +371,7 @@ class _RingPulsePainter extends CustomPainter {
         : 1.0 - ((progress - 0.3) / 0.7); // Fade out 30-100%
 
     final paint = Paint()
-      ..color = _ringPulseColor.withOpacity(0.15 * opacity)
+      ..color = _ringPulseColor.withValues(alpha: 0.15 * opacity)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
 

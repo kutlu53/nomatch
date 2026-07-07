@@ -174,7 +174,7 @@ class _RadarPainter extends CustomPainter {
       final segmentOpacity = (i / segmentCount) * 0.4 + 0.1;  // Daha hafif
 
       final spinnerPaint = Paint()
-        ..color = Colors.cyan.withOpacity(segmentOpacity)
+        ..color = Colors.cyan.withValues(alpha: segmentOpacity)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.8  // Daha ince
         ..strokeCap = StrokeCap.round;
@@ -190,7 +190,7 @@ class _RadarPainter extends CustomPainter {
 
     // ✨ Çok hafif outer ring
     final outerSpinnerPaint = Paint()
-      ..color = Colors.cyan.withOpacity(0.08)
+      ..color = Colors.cyan.withValues(alpha: 0.08)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
     canvas.drawCircle(center, spinnerRadius * 1.2, outerSpinnerPaint);
@@ -236,13 +236,13 @@ class _ConnectionTransitionPainter extends CustomPainter {
 
       // ✅ ENHANCED: Stronger outer glow
       final glowPaint = Paint()
-        ..color = targetColor.withOpacity(brightOpacity * 0.7)
+        ..color = targetColor.withValues(alpha: brightOpacity * 0.7)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, brightRadius * 3.0);
       canvas.drawCircle(targetPosition, brightRadius * 3.5, glowPaint);
 
       // ✅ ENHANCED: Brighter core
       final corePaint = Paint()
-        ..color = targetColor.withOpacity(brightOpacity * 1.2);
+        ..color = targetColor.withValues(alpha: brightOpacity * 1.2);
       canvas.drawCircle(targetPosition, brightRadius, corePaint);
     }
 
@@ -262,7 +262,7 @@ class _ConnectionTransitionPainter extends CustomPainter {
 
       // ✅ ENHANCED: Thicker and more glowing
       final ringPaint = Paint()
-        ..color = targetColor.withOpacity(ringOpacity)
+        ..color = targetColor.withValues(alpha: ringOpacity)
         ..style = PaintingStyle.stroke
         ..strokeWidth = lerpDouble(3.0, 16.0, ringT)! // Much thicker
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, lerpDouble(6.0, 20.0, ringT)!); // More glow
@@ -281,7 +281,7 @@ class _ConnectionTransitionPainter extends CustomPainter {
         final mergeOpacity = lerpDouble(0.0, 0.8, mergeT)!;
 
         final mergePaint = Paint()
-          ..color = targetColor.withOpacity(mergeOpacity)
+          ..color = targetColor.withValues(alpha: mergeOpacity)
           ..maskFilter = MaskFilter.blur(BlurStyle.normal, mergeRadius * 1.2);
         canvas.drawCircle(center, mergeRadius, mergePaint);
       }
@@ -296,7 +296,7 @@ class _ConnectionTransitionPainter extends CustomPainter {
       final fadeRadius = lerpDouble(radius * 0.4, radius * 0.8, fadeT)!;
 
       final fadePaint = Paint()
-        ..color = targetColor.withOpacity(fadeOpacity)
+        ..color = targetColor.withValues(alpha: fadeOpacity)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, fadeRadius * 0.8);
       canvas.drawCircle(center, fadeRadius, fadePaint);
 
@@ -312,7 +312,7 @@ class _ConnectionTransitionPainter extends CustomPainter {
   void _drawCheckmark(Canvas canvas, Offset center, double radius, Color color, double opacity) {
     // ✅ ENHANCED: Thicker, more visible checkmark
     final paint = Paint()
-      ..color = color.withOpacity(opacity)
+      ..color = color.withValues(alpha: opacity)
       ..strokeWidth = radius * 0.2 // Much thicker
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round
@@ -332,7 +332,7 @@ class _ConnectionTransitionPainter extends CustomPainter {
 
     // ✅ ENHANCED: Glowing circle around checkmark
     final glowPaint = Paint()
-      ..color = color.withOpacity(opacity * 0.6)
+      ..color = color.withValues(alpha: opacity * 0.6)
       ..style = PaintingStyle.stroke
       ..strokeWidth = radius * 0.12 // Thicker circle
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.2); // More glow
@@ -340,7 +340,7 @@ class _ConnectionTransitionPainter extends CustomPainter {
 
     // ✅ ENHANCED: Outer ring glow
     final outerGlowPaint = Paint()
-      ..color = color.withOpacity(opacity * 0.3)
+      ..color = color.withValues(alpha: opacity * 0.3)
       ..style = PaintingStyle.stroke
       ..strokeWidth = radius * 0.06
       ..maskFilter = MaskFilter.blur(BlurStyle.normal, radius * 0.15);

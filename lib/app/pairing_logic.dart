@@ -68,6 +68,11 @@ class LeaderAlgorithm {
   /// Generate session ID from both device IDs and timestamp
   static String generateSessionId(String leaderId, String followerId) {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    return '${leaderId.substring(0, 8)}_${followerId.substring(0, 8)}_$timestamp';
+    return '${_idPrefix(leaderId)}_${_idPrefix(followerId)}_$timestamp';
   }
+
+  /// ID'nin ilk 8 karakterini güvenle döndürür.
+  /// substring(0, 8) 8 karakterden kısa ID'lerde RangeError fırlatıyordu.
+  static String _idPrefix(String id) =>
+      id.length <= 8 ? id : id.substring(0, 8);
 }

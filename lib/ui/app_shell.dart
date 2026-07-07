@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../app/pairing_manager.dart';
 import '../app/app_state.dart';
-import '../app/pairing_logic.dart';
 import '../features/game/lazy_question_provider.dart';
 import '../plugins/p2p_ble/ble_p2p_plugin.dart';
 import '../services/sensor_manager.dart';

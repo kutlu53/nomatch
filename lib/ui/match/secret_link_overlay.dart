@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -123,7 +122,7 @@ class _SecretLinkPainter extends CustomPainter {
       final visiblePath = pathMetrics.extractPath(0, drawLength);
       
       final linePaint = Paint()
-        ..color = _linkColor.withOpacity(0.22 * dotOpacity * linkProgress)
+        ..color = _linkColor.withValues(alpha: 0.22 * dotOpacity * linkProgress)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.2 * strokeWidthMultiplier
         ..strokeCap = StrokeCap.round;
@@ -138,10 +137,10 @@ class _SecretLinkPainter extends CustomPainter {
     // Soft-edge with radial alpha falloff (no blur/glow)
     final gradient = RadialGradient(
       colors: [
-        color.withOpacity(opacity),
-        color.withOpacity(opacity * 0.7),
-        color.withOpacity(opacity * 0.3),
-        color.withOpacity(0.0),
+        color.withValues(alpha: opacity),
+        color.withValues(alpha: opacity * 0.7),
+        color.withValues(alpha: opacity * 0.3),
+        color.withValues(alpha: 0.0),
       ],
       stops: const [0.0, 0.5, 0.8, 1.0],
     );

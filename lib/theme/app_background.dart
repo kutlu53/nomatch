@@ -82,9 +82,9 @@ class _VignetteLayer extends StatelessWidget {
           center: const Alignment(0.0, -0.2), // Slightly above center
           radius: 1.1,
           colors: [
-            InkPlum.base.withOpacity(0.0),  // Center: transparent
-            InkPlum.base.withOpacity(0.0),  // Near zone: still transparent
-            InkPlum.edge.withOpacity(0.30), // Edges: very subtle darkening
+            InkPlum.base.withValues(alpha: 0.0),  // Center: transparent
+            InkPlum.base.withValues(alpha: 0.0),  // Near zone: still transparent
+            InkPlum.edge.withValues(alpha: 0.30), // Edges: very subtle darkening
           ],
           stops: const [0.0, 0.70, 1.0],
         ),
@@ -118,7 +118,7 @@ class _GrainPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final random = math.Random(42); // Fixed seed for consistent pattern
     final paint = Paint()
-      ..color = Colors.white.withOpacity(0.025) // ~2.5% opacity - very subtle
+      ..color = Colors.white.withValues(alpha: 0.025) // ~2.5% opacity - very subtle
       ..strokeWidth = 0.5
       ..strokeCap = StrokeCap.round;
 

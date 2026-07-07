@@ -6,14 +6,13 @@ import 'dart:developer' as dev;
 
 import 'core/debug_config.dart';
 import 'app/pairing_manager.dart';
-import 'app/app_state.dart';
-import 'app/pairing_logic.dart';
 import 'features/game/lazy_question_provider.dart';
 import 'plugins/p2p_ble/ble_p2p_plugin.dart';
 import 'plugins/p2p/p2p_events.dart';
 import 'plugins/p2p/p2p_messages.dart';
 import 'services/notification_service.dart';
 import 'theme/app_background.dart'; // ✅ Ink Plum background
+import 'theme/game_colors.dart';
 import 'ui/app_shell.dart';
 
 Future<void> main() async {
@@ -185,16 +184,47 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver, SingleTicker
     }
   }
 
+  /// Markadan seed'lenmiş koyu tema + tanımlı tipografi ölçeği.
+  /// Yazısız uygulama için bile, paylaşım ekranındaki metinlerin tutarlı
+  /// olması ve gelecekteki bileşenlerin aynı sistemi paylaşması adına.
+  ThemeData _buildTheme() {
+    const scheme = ColorScheme.dark(
+      primary: GameColors.purple,
+      secondary: GameColors.lime,
+      surface: InkPlum.surface,
+      error: GameColors.failurePrimary,
+      onPrimary: Colors.white,
+      onSecondary: InkPlum.base,
+      onSurface: GameColors.interactiveLight,
+    );
+
+    // Marka için ince ayarlı tip rampası (sistem fontu üzerinde tutarlı
+    // ağırlık + harf aralığı). Başlıklar hafif negatif tracking ile daha premium.
+    const textTheme = TextTheme(
+      displayLarge: TextStyle(fontWeight: FontWeight.w700, letterSpacing: -0.5),
+      headlineMedium: TextStyle(fontWeight: FontWeight.w700, letterSpacing: -0.25),
+      titleLarge: TextStyle(fontWeight: FontWeight.w600, letterSpacing: 0.0),
+      bodyLarge: TextStyle(fontWeight: FontWeight.w500, letterSpacing: 0.15),
+      bodyMedium: TextStyle(fontWeight: FontWeight.w500, letterSpacing: 0.15),
+      labelLarge: TextStyle(fontWeight: FontWeight.w600, letterSpacing: 0.5),
+    );
+
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: scheme,
+      textTheme: textTheme,
+      splashFactory: NoSplash.splashFactory,
+      highlightColor: Colors.transparent,
+      splashColor: Colors.transparent,
+      scaffoldBackgroundColor: Colors.transparent,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        splashFactory: NoSplash.splashFactory,
-        highlightColor: Colors.transparent,
-        splashColor: Colors.transparent,
-        scaffoldBackgroundColor: Colors.transparent,
-      ),
+      theme: _buildTheme(),
       // ✅ Ink Plum background wraps entire app
       builder: (context, child) => AppBackground(
         child: child ?? const SizedBox.shrink(),

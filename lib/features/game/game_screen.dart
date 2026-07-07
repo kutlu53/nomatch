@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 
 import '../../theme/game_colors.dart';
 import '../../theme/app_background.dart';
+import '../../theme/design_tokens.dart';
+import '../../ui/widgets/brand_indicators.dart';
 import 'game_engine.dart';
 import 'game_state.dart';
 import 'models.dart';
@@ -300,17 +302,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 children: [
                 // ✅ LOADING STATE: İlk round yüklenene kadar (yazısız, evrensel)
                 if (!hasVisuals)
-                  Center(
-                    child: SizedBox(
-                      width: 48,
-                      height: 48,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 3,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          GameColors.purple.withValues(alpha: GameColors.opacityMedium),
-                        ),
-                      ),
-                    ),
+                  const Center(
+                    child: PulseLoader(size: 56, color: GameColors.purple),
                   ),
                   
                 // ✅ TOP HALF (with tap handling) - only show when visuals ready
@@ -323,11 +316,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   child: RepaintBoundary(
                     child: AnimatedOpacity(
                       opacity: _isReconnecting ? 0.5 : 1.0,
-                      duration: const Duration(milliseconds: 300),
+                      duration: Motion.base,
                       child: IgnorePointer(
                       ignoring: snap.phase != GamePhase.playing || tapDisabled || _isReconnecting,
                       child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 300),
+                        duration: Motion.base,
                         transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
                         child: _HalfBoard(
                           key: ValueKey(snap.roundNumber),
@@ -366,11 +359,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   child: RepaintBoundary(
                     child: AnimatedOpacity(
                       opacity: _isReconnecting ? 0.5 : 1.0,
-                      duration: const Duration(milliseconds: 300),
+                      duration: Motion.base,
                       child: IgnorePointer(
                       ignoring: snap.phase != GamePhase.playing || tapDisabled || _isReconnecting,
                       child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 300),
+                        duration: Motion.base,
                         transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
                         child: _HalfBoard(
                           key: ValueKey(snap.roundNumber),
@@ -424,7 +417,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   child: IgnorePointer(
                     ignoring: snap?.phase == GamePhase.playing,
                     child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 300),
+                      duration: Motion.base,
                       transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
                       child: (snap?.phase == GamePhase.terminalFail || snap?.phase == GamePhase.restarting)
                         ? RepaintBoundary(
@@ -452,17 +445,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       child: Center(
                         child: AnimatedBuilder(
                           animation: _exitProgressController,
-                          builder: (context, _) => SizedBox(
-                            width: 80,
-                            height: 80,
-                            child: CircularProgressIndicator(
-                              value: _exitProgressController.value,
-                              backgroundColor: GameColors.purple.withValues(alpha: 0.15),
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                GameColors.purple.withValues(alpha: 0.75),
-                              ),
-                              strokeWidth: 5,
-                            ),
+                          builder: (context, _) => ProgressRing(
+                            value: _exitProgressController.value,
+                            size: 80,
+                            color: GameColors.purple,
                           ),
                         ),
                       ),
@@ -574,7 +560,7 @@ class _HalfBoardState extends State<_HalfBoard> with SingleTickerProviderStateMi
 
     return Center(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+        padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
         child: GestureDetector(
           onTapDown: (_) {
             if (!_alreadyTapped) {
@@ -604,7 +590,7 @@ class _HalfBoardState extends State<_HalfBoard> with SingleTickerProviderStateMi
               duration: const Duration(milliseconds: 50),
               decoration: BoxDecoration(
                 color: InkPlum.surface.withValues(alpha: _pressed ? 0.8 : 0.6),
-                borderRadius: BorderRadius.circular(32),
+                borderRadius: Radii.brLg,
                 boxShadow: [
                   // ✅ Normal gölge
                   BoxShadow(
@@ -1150,7 +1136,7 @@ class _FailureAnimationOverlayState extends State<_FailureAnimationOverlay>
                         GestureDetector(
                           onTap: _onRetryPressed,
                           child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 300),
+                            duration: Motion.base,
                             width: 72,
                             height: 72,
                             decoration: BoxDecoration(

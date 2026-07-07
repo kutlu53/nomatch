@@ -183,7 +183,7 @@ class RadarRingsPainter extends CustomPainter {
       final strokeWidth = 1.0 + alertOpacity;
 
       final ringPaint = Paint()
-        ..color = color.withOpacity(opacity.clamp(0.0, 1.0))
+        ..color = color.withValues(alpha: opacity.clamp(0.0, 1.0))
         ..style = PaintingStyle.stroke
         ..strokeWidth = strokeWidth; // Hairline (alert sırasında kalınlaşır)
 
@@ -217,7 +217,7 @@ class CenterCrosshairPainter extends CustomPainter {
     final radius = math.min(size.width, size.height) * 0.42;
 
     final crossPaint = Paint()
-      ..color = _ringColor.withOpacity(0.06 * opacity)
+      ..color = _ringColor.withValues(alpha: 0.06 * opacity)
       ..strokeWidth = 1.0
       ..strokeCap = StrokeCap.round;
 
@@ -236,7 +236,7 @@ class CenterCrosshairPainter extends CustomPainter {
 
     // Tiny center dot
     final dotPaint = Paint()
-      ..color = _ringColor.withOpacity(0.10 * opacity);
+      ..color = _ringColor.withValues(alpha: 0.10 * opacity);
     canvas.drawCircle(center, 1.5, dotPaint);
   }
 
