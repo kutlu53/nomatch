@@ -1,7 +1,7 @@
 name: nomatch
 description: Tap!Match - offline-first P2P split-screen game (no text/icons/sound).
 publish_to: "none"
-version: 1.0.4+3
+version: 1.0.4+4
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

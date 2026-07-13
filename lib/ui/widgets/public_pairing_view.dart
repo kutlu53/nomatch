@@ -61,26 +61,30 @@ class PublicPairingView extends StatelessWidget {
         }),
         
         // Logo with circle - no tap needed, BLE auto-starts in public mode
-        Center(
-          child: Opacity(
-            opacity: 0.25, // %75 saydam
-            child: Container(
-              width: circleSize,
-              height: circleSize,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: _circleColor.withValues(alpha: 0.6),
-                  width: 2.0,
+        // IgnorePointer: dekorasyonlu Container daire içindeki dokunuşları
+        // yutuyordu; daireye yakın dot'lara basmak bazen boşa gidiyordu.
+        IgnorePointer(
+          child: Center(
+            child: Opacity(
+              opacity: 0.25, // %75 saydam
+              child: Container(
+                width: circleSize,
+                height: circleSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: _circleColor.withValues(alpha: 0.6),
+                    width: 2.0,
+                  ),
                 ),
-              ),
-              child: Center(
-                child: Image.asset(
-                  'assets/branding/logo.png',
-                  width: logoSize,
-                  height: logoSize,
-                  fit: BoxFit.contain,
-                  filterQuality: FilterQuality.high,
+                child: Center(
+                  child: Image.asset(
+                    'assets/branding/logo.png',
+                    width: logoSize,
+                    height: logoSize,
+                    fit: BoxFit.contain,
+                    filterQuality: FilterQuality.high,
+                  ),
                 ),
               ),
             ),
@@ -115,10 +119,19 @@ class _PeerDotState extends State<_PeerDot> with SingleTickerProviderStateMixin 
   late final Animation<double> _pulseAnimation;
   late final Animation<double> _scaleAnimation;
 
+  /// RSSI kaynaklı konum zıplamasını önlemek için yumuşatılmış mesafe.
+  /// Her güncellemede yeni değere %30 ağırlıkla yaklaşır (düşük geçişli filtre);
+  /// dot yerinde küçük adımlarla kayar, kullanıcı basarken hedef kaçmaz.
+  late double _smoothedDistance;
+
+  /// Dokunuşun başladığı global konum (parmak kayması toleransı için).
+  Offset? _pointerDownPosition;
+
   @override
   void initState() {
     super.initState();
-    
+    _smoothedDistance = widget.peer.normalizedDistance;
+
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
@@ -143,6 +156,9 @@ class _PeerDotState extends State<_PeerDot> with SingleTickerProviderStateMixin 
     if (oldWidget.peer.state != widget.peer.state) {
       _updateAnimation();
     }
+    // Yeni RSSI değerine sıçramak yerine yumuşak geçiş yap
+    _smoothedDistance =
+        _smoothedDistance * 0.7 + widget.peer.normalizedDistance * 0.3;
   }
   
   void _updateAnimation() {
@@ -186,25 +202,31 @@ class _PeerDotState extends State<_PeerDot> with SingleTickerProviderStateMixin 
     final hash = widget.peer.id.hashCode & 0x7fffffff;
     final baseAngle = (hash * goldenAngle) % (2 * math.pi);
     
-    // Distance from circle: closer RSSI = closer to circle
-    final normalizedDist = widget.peer.normalizedDistance;
-    
+    // Distance from circle: closer RSSI = closer to circle.
+    // Ham RSSI yerine yumuşatılmış değer: dot her sinyal güncellemesinde
+    // zıplamaz, kullanıcı basarken hedef yerinden kaçmaz.
+    final normalizedDist = _smoothedDistance;
+
     // Min distance from circle edge: 25px (very close)
     // Max distance from circle edge: 90px (far)
     final distanceFromCircle = 25 + (1 - normalizedDist) * 65;
     final totalRadius = widget.circleRadius + distanceFromCircle;
-    
+
     // Calculate position
     var x = widget.center.dx + math.cos(baseAngle) * totalRadius;
     var y = widget.center.dy + math.sin(baseAngle) * totalRadius;
-    
+
     // Bigger dot size: 16-28px based on signal strength
     final baseDotSize = 16 + normalizedDist * 12;
     // Max possible dot size (with scale pulse)
     const maxScale = 1.3;
     final maxDotSize = baseDotSize * maxScale;
-    final halfTap = (maxDotSize + 20) / 2; // Half of tap area
-    
+    // Dokunma alanı: en küçük dot'ta bile Apple HIG minimumu (44pt) üstünde
+    // kalsın diye 48px tabanlı. Pulse animasyonundan bağımsız sabit boyut —
+    // dokunma hedefi kare kare değişmez.
+    final tapSize = math.max(48.0, maxDotSize + 20);
+    final halfTap = tapSize / 2;
+
     // ✅ FIX: Clamp position so the dot (including tap area) stays within screen bounds
     x = x.clamp(halfTap, screenSize.width - halfTap);
     y = y.clamp(halfTap, screenSize.height - halfTap);
@@ -220,14 +242,31 @@ class _PeerDotState extends State<_PeerDot> with SingleTickerProviderStateMixin 
         final dotSize = baseDotSize * scale;
         
         return Positioned(
-          left: x - dotSize / 2,
-          top: y - dotSize / 2,
-          child: GestureDetector(
-            onTap: widget.onTap,
+          left: x - halfTap,
+          top: y - halfTap,
+          // GestureDetector yerine Listener: ekran yatay PageView içinde
+          // olduğu için tap, drag ile gesture arena'da yarışıp kaybedebiliyordu
+          // (hareketli metro/otobüste parmak kayması > 18px slop → tap iptal).
+          // Listener arena'ya girmez; kendi geniş toleransımızla dokunuşu
+          // her koşulda yakalarız.
+          child: Listener(
             behavior: HitTestBehavior.opaque,
+            onPointerDown: (event) {
+              _pointerDownPosition = event.position;
+            },
+            onPointerUp: (event) {
+              final down = _pointerDownPosition;
+              _pointerDownPosition = null;
+              if (down == null || widget.onTap == null) return;
+              // Sarsıntı toleransı: parmak 30px'e kadar kayabilir, yine tap sayılır
+              if ((event.position - down).distance <= 30.0) {
+                widget.onTap!();
+              }
+            },
+            onPointerCancel: (_) => _pointerDownPosition = null,
             child: Container(
-              width: dotSize + 20, // Extra tap area
-              height: dotSize + 20,
+              width: tapSize,
+              height: tapSize,
               alignment: Alignment.center,
               child: Container(
                 width: dotSize,
