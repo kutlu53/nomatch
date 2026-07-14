@@ -32,9 +32,8 @@ class BleConstants {
   static const Duration connectionTimeout = Duration(seconds: 20);
   static const Duration reconnectDelay = Duration(seconds: 2);
   
-  // RSSI thresholds for proximity detection
-  // RSSI değerleri: 0 dBm (çok yakın) ile -100 dBm (çok uzak) arası
-  static const int minRssi = -95;  // ~50m (açık alan)
-  static const int maxRssi = -30;  // ~0.5m (çok yakın)
-  static const int idealRssi = -70; // ~10m (ideal mesafe)
+  // RSSI alt sınırı — radar modu farklı masalardaki yabancıların uzak
+  // mesafeden eşleşmesi için tasarlandı, menzil olabildiğince geniş tutulur.
+  // -100 dBm pratikte gürültü tabanı: radyonun duyabildiği her cihaz geçer.
+  static const int minRssi = -100;
 }

@@ -1078,9 +1078,12 @@ class PairingManager {
       return; // Public modda bağlantı başlatılmaz
     }
     
-    // Only connect if signal is strong enough (RSSI > -80 dBm)
-    if (rssi < -80) {
-      pairingLog('[PEER] ⚠️ Signal too weak, skipping');
+    // Bağlantı için alt sınır -95 dBm: radar modu uzak masalar arası eşleşme
+    // için tasarlandı, menzil geniş tutulur. -95 altı gürültü tabanına çok
+    // yakın — bağlantı denemesi büyük olasılıkla 10 sn'lik timeout'u yakıp
+    // daha yakın bir peer'ın keşfini bloke eder, o yüzden elenir.
+    if (rssi < -95) {
+      pairingLog('[PEER] ⚠️ Signal too weak (RSSI: $rssi < -95), skipping');
       return;
     }
 

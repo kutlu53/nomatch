@@ -271,6 +271,15 @@ class _PeerDotState extends State<_PeerDot> with TickerProviderStateMixin {
   // ✅ UI: Dokunma geri bildirimi (haptic + anlık büyüme).
   bool _pressed = false;
 
+  // ✅ UI: "Bağlantı kurulamadı" reddi — yatay "hayır" sallanması + morun
+  // idle rengine boşalması. requesting → idle geçişinde (timeout/red) oynar.
+  late final AnimationController _failController;
+
+  /// Kullanıcının kendi iptali (requesting dot'a yeniden dokunma) da
+  /// requesting → idle geçişi üretir; onu başarısızlık olarak oynatmamak
+  /// için dokunuş anında işaretlenir.
+  bool _expectLocalCancel = false;
+
   /// RSSI kaynaklı konum zıplamasını önlemek için yumuşatılmış mesafe.
   /// Her güncellemede yeni değere %30 ağırlıkla yaklaşır (düşük geçişli filtre);
   /// dot yerinde küçük adımlarla kayar, kullanıcı basarken hedef kaçmaz.
@@ -297,6 +306,11 @@ class _PeerDotState extends State<_PeerDot> with TickerProviderStateMixin {
     // Scale pulse for active states
     _scaleAnimation = Tween<double>(begin: 1.0, end: 1.3).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    _failController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 500),
     );
 
     _entryController = AnimationController(
@@ -331,6 +345,14 @@ class _PeerDotState extends State<_PeerDot> with TickerProviderStateMixin {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.peer.state != widget.peer.state) {
       _updateAnimation();
+      // requesting → idle = istek karşılıksız kaldı (timeout ya da karşı
+      // tarafın reddi). Kullanıcının kendi iptalinde oynatılmaz.
+      if (oldWidget.peer.state == PublicPeerState.requesting &&
+          widget.peer.state == PublicPeerState.idle &&
+          !_expectLocalCancel) {
+        _playFailFeedback();
+      }
+      _expectLocalCancel = false;
     }
     // Yeni RSSI değerine sıçramak yerine yumuşak geçiş yap
     _smoothedDistance =
@@ -353,9 +375,20 @@ class _PeerDotState extends State<_PeerDot> with TickerProviderStateMixin {
     }
   }
 
+  /// ✅ UI: Başarısızlık cümlesi — yenilgi ekranıyla aynı haptik dil
+  /// (orta darbe + gecikmeli hafif tık), eş zamanlı sallanma ve renk sönmesi.
+  void _playFailFeedback() {
+    HapticFeedback.mediumImpact();
+    Future.delayed(const Duration(milliseconds: 150), () {
+      if (mounted) HapticFeedback.lightImpact();
+    });
+    _failController.forward(from: 0.0);
+  }
+
   @override
   void dispose() {
     _pulseController.dispose();
+    _failController.dispose();
     _entryController.dispose();
     super.dispose();
   }
@@ -422,7 +455,8 @@ class _PeerDotState extends State<_PeerDot> with TickerProviderStateMixin {
         final isActive = state != PublicPeerState.idle;
 
         return AnimatedBuilder(
-          animation: Listenable.merge([_pulseController, _entryController]),
+          animation: Listenable.merge(
+              [_pulseController, _entryController, _failController]),
           builder: (context, child) {
             // Requested durumunda dot sabit durur (mesajı halka dalgası taşır);
             // diğer aktif durumlarda mevcut nabız ölçek/opaklığı kullanılır.
@@ -432,6 +466,18 @@ class _PeerDotState extends State<_PeerDot> with TickerProviderStateMixin {
                 ? 0.95
                 : (isActive ? _pulseAnimation.value : 0.7);
             final dotSize = baseDotSize * pulseScale;
+
+            // ✅ UI: Başarısızlık cümlesi — animasyon çalışmıyorken t=1 kabul
+            // edilir (sallanma 0, renk = durum rengi); böylece hiç oynamamış
+            // dot'lar etkilenmez.
+            final failT =
+                _failController.isAnimating ? _failController.value : 1.0;
+            // Sönümlenen yatay "hayır" salınımı (3 tam gidiş-geliş).
+            final shakeDx = math.sin(failT * math.pi * 6) * 8.0 * (1 - failT);
+            // Mor, dot'tan boşalarak idle rengine söner (glow da aynı rengi
+            // kullandığı için birlikte söner).
+            final effectiveColor = Color.lerp(_dotColorRequesting, dotColor,
+                Curves.easeOut.transform(failT))!;
 
             return Positioned(
               left: x - halfTap,
@@ -458,6 +504,11 @@ class _PeerDotState extends State<_PeerDot> with TickerProviderStateMixin {
                   if (down == null || widget.onTap == null) return;
                   // Sarsıntı toleransı: parmak 30px'e kadar kayabilir, yine tap sayılır
                   if ((event.position - down).distance <= 30.0) {
+                    // Requesting dot'a dokunmak iptal demek — bunun ürettiği
+                    // requesting → idle geçişini başarısızlık olarak oynatma.
+                    if (widget.peer.state == PublicPeerState.requesting) {
+                      _expectLocalCancel = true;
+                    }
                     widget.onTap!();
                   }
                 },
@@ -486,29 +537,34 @@ class _PeerDotState extends State<_PeerDot> with TickerProviderStateMixin {
                               ),
 
                           // Dot'un kendisi
-                          AnimatedScale(
-                            scale: _pressed ? 1.15 : 1.0,
-                            duration: Motion.instant,
-                            child: Container(
-                              width: dotSize,
-                              height: dotSize,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: dotColor.withValues(alpha: opacity),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color:
-                                        dotColor.withValues(alpha: 0.4 * opacity),
-                                    blurRadius: dotSize * 0.8,
-                                    spreadRadius: isActive ? 4 : 2,
-                                  ),
-                                  if (isActive)
+                          Transform.translate(
+                            offset: Offset(shakeDx, 0),
+                            child: AnimatedScale(
+                              scale: _pressed ? 1.15 : 1.0,
+                              duration: Motion.instant,
+                              child: Container(
+                                width: dotSize,
+                                height: dotSize,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color:
+                                      effectiveColor.withValues(alpha: opacity),
+                                  boxShadow: [
                                     BoxShadow(
-                                      color: dotColor.withValues(alpha: 0.2),
-                                      blurRadius: dotSize * 1.5,
-                                      spreadRadius: 8,
+                                      color: effectiveColor.withValues(
+                                          alpha: 0.4 * opacity),
+                                      blurRadius: dotSize * 0.8,
+                                      spreadRadius: isActive ? 4 : 2,
                                     ),
-                                ],
+                                    if (isActive)
+                                      BoxShadow(
+                                        color: effectiveColor.withValues(
+                                            alpha: 0.2),
+                                        blurRadius: dotSize * 1.5,
+                                        spreadRadius: 8,
+                                      ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),

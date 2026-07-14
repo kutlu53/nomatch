@@ -487,6 +487,11 @@ _isAdvertising = true;
       await FlutterBluePlus.startScan(
         // withServices: [Guid(BleConstants.serviceUuid)],  // Temporarily disabled
         timeout: BleConstants.scanTimeout,
+        // ✅ RSSI her advertisement paketiyle güncellensin. Varsayılanda cihaz
+        // tarama oturumu başına bir kez, İLK RSSI değeriyle raporlanıyordu:
+        // sınırda zayıf okunan peer, telefonlar yaklaştırılsa bile tarama
+        // yeniden başlayana kadar (30 sn) elenmeye devam ediyordu.
+        continuousUpdates: true,
       );
       dev.log('BLE_P2P: Scanning WITHOUT service UUID filter (debug mode)');
     } catch (e) {
@@ -543,9 +548,10 @@ _isAdvertising = true;
     
     dev.log('[BLE] ✅ Device advertises Nomatch service!');
     
-    // Filter by RSSI (proximity check)
-    if (rssi < BleConstants.minRssi || rssi > BleConstants.maxRssi) {
-      dev.log('[BLE] ⚠️ Device RSSI out of range: $rssi (min: ${BleConstants.minRssi}, max: ${BleConstants.maxRssi})');
+    // Yalnızca alt sınır kontrolü — üst sınır yok, bitişik duran telefonlar
+    // (RSSI > -30) da geçerli. Uzak mesafe eşleşmesi tasarımın parçası.
+    if (rssi < BleConstants.minRssi) {
+      dev.log('[BLE] ⚠️ Device RSSI too weak: $rssi (min: ${BleConstants.minRssi})');
       return;
     }
     
