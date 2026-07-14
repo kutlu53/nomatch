@@ -354,6 +354,10 @@ class BleP2pPlugin {
     if (_connectedDevice != null) {
       try {
         dev.log('[BLE] 🔌 Disconnecting device: ${_connectedDevice!.remoteId}');
+        // ✅ FIX: Kasıtlı kapanış — önce dinleyiciyi sustur ki reset sırasında
+        // sahte PeerDisconnected event'i üretilmesin.
+        await _connectionStateSub?.cancel();
+        _connectionStateSub = null;
         await _connectedDevice!.disconnect();
         dev.log('[BLE] ✅ Device disconnected');
       } catch (e) {
@@ -630,6 +634,8 @@ class BleP2pPlugin {
         dev.log('[BLE] ❌ No valid P2P service found - disconnecting from non-Nomatch device');
         _connectedDevice = null;
         await device.disconnect();
+        // ✅ FIX: Bayrak true kalırsa auto-connect kalıcı olarak kilitleniyordu.
+        _isConnecting = false;
         _emitError('invalid_device', 'Device does not have P2P service');
         return;
       }
@@ -681,11 +687,14 @@ class BleP2pPlugin {
         dev.log('[BLE] ⚠️ Service characteristics not available, continuing without characteristic subscriptions');
       }
       
-      // ✅ FIX: Leader = smaller ID (consistent with PairingManager's LeaderAlgorithm)
+      // ⚠️ NOT: Buradaki isLeader yalnızca ÖN TAHMİNDİR ve güvenilir değildir
+      // (myId native, peerId BLE peripheral UUID — farklı namespace'ler).
+      // Gerçek lider seçimi PairingManager'da native↔native kimliklerle
+      // yapılır ve bu değeri her iki modda da ezip geçer.
       final myId = _appInstanceId ?? '';
       final peerId = device.remoteId.toString();
       _peerId = peerId;
-      final isLeader = myId.compareTo(peerId) < 0; // ✅ Smaller ID = leader
+      final isLeader = myId.compareTo(peerId) < 0;
       
       dev.log('[BLE] ✅ ✅ ✅ CONNECTED ✅ ✅ ✅');
       dev.log('[BLE]   - Peer ID: $peerId');
@@ -713,6 +722,17 @@ class BleP2pPlugin {
       
     } catch (e) {
       dev.log('[BLE] ❌ Connection failed: $e');
+      // ✅ FIX: Yarıda kalan bağlantının izleri temizlenmeli. _connectedDevice
+      // dolu kalırsa sonraki tüm connect() çağrıları "zaten bağlı" sanılıp
+      // sessizce atlanıyor ve eşleşme hard reset'e kadar kilitleniyordu.
+      _connectedDevice = null;
+      _messageChar = null;
+      _sensorChar = null;
+      _peerId = null;
+      try {
+        // Fiziksel link kurulmuş ama servis keşfi patlamış olabilir.
+        await device.disconnect();
+      } catch (_) {}
       _isConnecting = false; // Connection failed, allow retry
       _emitError('connection_failed', e.toString());
     }
@@ -720,9 +740,18 @@ class BleP2pPlugin {
   
   Future<void> _disconnect() async {
     if (_connectedDevice == null) return;
-    
+
     dev.log('BLE_P2P: Disconnecting');
-    await _connectedDevice!.disconnect();
+    // ✅ FIX: Bu disconnect kasıtlı (stop/mod geçişi). Dinleyici iptal
+    // edilmeden kapatılırsa PeerDisconnected event'i üretiliyor ve üst
+    // katman normal mod geçişini "eşleşme başarısız" sanıyordu.
+    await _connectionStateSub?.cancel();
+    _connectionStateSub = null;
+    try {
+      await _connectedDevice!.disconnect();
+    } catch (e) {
+      dev.log('BLE_P2P: ⚠️ Error disconnecting: $e');
+    }
     _connectedDevice = null;
     _messageChar = null;
     _sensorChar = null;
@@ -739,10 +768,57 @@ class BleP2pPlugin {
     _emitDisconnected(peerId, 'connection_lost');
   }
   
+  // ✅ FIX: Parçalanmış (framed) mesajlar için birleştirme durumu.
+  // Başlık: marker(1) + msgId(4) + index(2) + total(2) = 9 bayt.
+  // JSON mesajlar '{' (0x7B) ile başladığı için 0x01 marker'ı çakışmaz.
+  static const int _chunkMarker = 0x01;
+  static const int _chunkHeaderSize = 9;
+  int _chunkMsgIdCounter = 0;
+  final Map<int, _ChunkBuffer> _chunkBuffers = {};
+
+  /// Başlıklı bir parçayı tampona ekler; mesaj tamamlandıysa bütününü döndürür.
+  List<int>? _addChunk(List<int> chunk) {
+    final msgId = (chunk[1] << 24) | (chunk[2] << 16) | (chunk[3] << 8) | chunk[4];
+    final index = (chunk[5] << 8) | chunk[6];
+    final total = (chunk[7] << 8) | chunk[8];
+    if (total == 0 || index >= total) return null;
+
+    // Yarıda kopan aktarımların tamponları birikmesin.
+    final now = DateTime.now();
+    _chunkBuffers.removeWhere((_, b) => now.difference(b.createdAt).inSeconds > 15);
+
+    final buf = _chunkBuffers.putIfAbsent(msgId, () => _ChunkBuffer(total));
+    if (buf.total != total) {
+      _chunkBuffers.remove(msgId); // tutarsız başlık — baştan başla
+      return null;
+    }
+    buf.parts[index] = chunk.sublist(_chunkHeaderSize);
+    if (buf.parts.length < buf.total) return null;
+
+    _chunkBuffers.remove(msgId);
+    final data = <int>[];
+    for (var i = 0; i < total; i++) {
+      final part = buf.parts[i];
+      if (part == null) return null;
+      data.addAll(part);
+    }
+    print('[BLE-RECV] 🧩 Reassembled $total chunks into ${data.length} bytes');
+    return data;
+  }
+
   /// ✅ OPTIMIZED: Process message in background isolate to avoid main thread blocking
   void _onMessageReceived(List<int> value) async {
     if (value.isEmpty) return;
-    
+
+    // ✅ FIX: Başlıklı parça ise birleştir; mesaj tamamlanana dek bekle.
+    // Eskiden her parça ayrı JSON sanılıp çöpe gidiyordu — 509 baytı aşan
+    // hiçbir mesaj (ör. uzun ShareOffer) karşıya ulaşamıyordu.
+    if (value[0] == _chunkMarker && value.length > _chunkHeaderSize) {
+      final complete = _addChunk(value);
+      if (complete == null) return;
+      value = complete;
+    }
+
     final receiveTime = DateTime.now().millisecondsSinceEpoch;
     print('[BLE-RECV] ⏱️ Message received at $receiveTime (${value.length} bytes)');
     
@@ -777,25 +853,44 @@ class BleP2pPlugin {
     
     // BLE has MTU limit, send in chunks
     const chunkSize = 512 - 3; // ATT header overhead
-    
-    for (int i = 0; i < data.length; i += chunkSize) {
-      final end = (i + chunkSize < data.length) ? i + chunkSize : data.length;
-      final chunk = data.sublist(i, end);
-      
+
+    // Tek yazmaya sığıyorsa başlıksız gönder (eski davranış, geriye uyumlu).
+    if (data.length <= chunkSize) {
+      await _messageChar!.write(data, withoutResponse: false);
+      print('[BLE-SEND] ✅ Sent in single write (${data.length} bytes)');
+      return;
+    }
+
+    // ✅ FIX: Uzun mesajlar başlıklı parçalara bölünür (alıcı _addChunk ile
+    // birleştirir). Eskiden başlıksız bölünüyor ve karşıda her parça ayrı
+    // JSON sanılıp atılıyordu — uzun mesajlar hiç iletilemiyordu.
+    const payloadSize = chunkSize - _chunkHeaderSize;
+    final msgId = (_chunkMsgIdCounter++) & 0xFFFFFFFF;
+    final total = (data.length + payloadSize - 1) ~/ payloadSize;
+
+    for (int index = 0; index < total; index++) {
+      final start = index * payloadSize;
+      final end = (start + payloadSize < data.length) ? start + payloadSize : data.length;
+      final chunk = <int>[
+        _chunkMarker,
+        (msgId >> 24) & 0xFF, (msgId >> 16) & 0xFF, (msgId >> 8) & 0xFF, msgId & 0xFF,
+        (index >> 8) & 0xFF, index & 0xFF,
+        (total >> 8) & 0xFF, total & 0xFF,
+        ...data.sublist(start, end),
+      ];
+
       try {
-        print('[BLE-SEND] 📤 Writing chunk: bytes $i-$end (${chunk.length} bytes)');
+        print('[BLE-SEND] 📤 Writing chunk ${index + 1}/$total (${chunk.length} bytes)');
         await _messageChar!.write(chunk, withoutResponse: false);
-        print('[BLE-SEND] ✅ Chunk written successfully');
-        dev.log('[BLE-SEND] ✅ Chunk written: ${chunk.length} bytes at offset $i');
       } catch (e) {
-        print('[BLE-SEND] ❌ Write failed: $e');
-        dev.log('[BLE-SEND] ❌ Write failed: $e');
+        print('[BLE-SEND] ❌ Chunk write failed: $e');
+        dev.log('[BLE-SEND] ❌ Chunk write failed: $e');
         rethrow;
       }
     }
-    
-    print('[BLE-SEND] ✅ All chunks sent!');
-    dev.log('[BLE-SEND] ✅ All chunks sent!');
+
+    print('[BLE-SEND] ✅ All $total chunks sent!');
+    dev.log('[BLE-SEND] ✅ All $total chunks sent!');
   }
   
   Future<bool> _requestPermissions() async {
@@ -897,4 +992,13 @@ P2pMessage _parseMessageInIsolate(List<int> bytes) {
   final jsonString = utf8.decode(bytes);
   final codec = P2pCodec();
   return codec.decode(jsonString);
+}
+
+/// Parçalanmış bir mesajın birleştirme tamponu (bkz. _addChunk).
+class _ChunkBuffer {
+  final int total;
+  final Map<int, List<int>> parts = {};
+  final DateTime createdAt = DateTime.now();
+
+  _ChunkBuffer(this.total);
 }

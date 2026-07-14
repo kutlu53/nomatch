@@ -70,6 +70,13 @@ final class GameEngine {
   // ✅ NEW: Retry intent tracking
   bool _localRetryIntent = false;
   bool _peerRetryIntent = false;
+  // ✅ FIX: Duplicate mesaj korumaları (BLE katmanı retry'la gönderdiği için
+  // aynı mesaj iki kez teslim edilebilir).
+  bool _restartScheduled = false;
+  String? _lastRoundStartMid;
+  // ✅ FIX: Dispose sonrası çalışan gecikmeli callback'ler kapalı controller'a
+  // yazmasın / ölü oturum için BLE mesajı göndermesin.
+  bool _disposed = false;
   
   // ✅ FIX: Track if we deferred leadership to peer (for restart conflict resolution)
   bool _deferredToRemoteLeadership = false;
@@ -147,6 +154,7 @@ final class GameEngine {
       // ✅ NEW: Defer first round until UI is ready (animated transition complete)
       // Wait 500ms to let UI transition animations settle, then start
       Future.delayed(const Duration(milliseconds: 500), () {
+        if (_disposed) return; // eşleşme bu sırada kapatılmış olabilir
         // ✅ FIX: Check _effectiveLeader in case we deferred during the delay
         if (_peerId != null && _effectiveLeader) {
           _log(" 🚀 NOW calling _maybeStartFirstRound");
@@ -252,6 +260,7 @@ final class GameEngine {
       
       // Start first round after delay
       Future.delayed(const Duration(milliseconds: 500), () {
+        if (_disposed) return; // eşleşme bu sırada kapatılmış olabilir
         if (_peerId != null && _effectiveLeader) {
           _log(" 🚀 Starting first round (restart)");
           _maybeStartFirstRound();
@@ -303,10 +312,20 @@ final class GameEngine {
   
   /// ✅ NEW: Handle incoming retry intent from peer
   void _onPeerRetryIntent() {
+    // ✅ FIX: Duplicate intent ikinci kez restart planlamasın.
+    // (Erken gelen intent kabul edilir: karşı taraf grace farkıyla birkaç
+    // saniye önce bitirip retry'a basmış olabilir. Bayat intent'e karşı
+    // koruma tur başlangıcında yapılır — yeni tur başlıyorsa önceki oyundan
+    // kalan intent geçersizdir.)
+    if (_peerRetryIntent) {
+      _log(" ⚠️ Duplicate peer retry intent ignored");
+      return;
+    }
+
     _log(" 🔄 ═══════════════════════════════════════");
     _log(" 🔄 RECEIVED PEER RETRY INTENT");
     _log(" 🔄 ═══════════════════════════════════════");
-    
+
     _peerRetryIntent = true;
     
     // Notify UI that peer wants to retry
@@ -321,26 +340,36 @@ final class GameEngine {
     _log(" 🔍 Checking retry intent - local=$_localRetryIntent, peer=$_peerRetryIntent");
     
     if (_localRetryIntent && _peerRetryIntent) {
+      // ✅ FIX: Restart zaten planlandıysa ikinci kez planlama (duplicate
+      // mesaj çift restart'a ve çift GameStart gönderimine yol açıyordu).
+      if (_restartScheduled) {
+        _log(" ⚠️ Restart already scheduled - ignoring");
+        return;
+      }
+      _restartScheduled = true;
+
       _log(" ✅ ═══════════════════════════════════════");
       _log(" ✅ BOTH PLAYERS WANT TO RETRY - STARTING COUNTDOWN!");
       _log(" ✅ ═══════════════════════════════════════");
-      
+
       // ✅ NEW: Set restarting phase to show green arrow on both phones
       _setState(_state.copyWith(phase: GamePhase.restarting));
-      
+
       // ✅ Wait 500ms for the "game starting" animation, then restart
       Future.delayed(const Duration(milliseconds: 500), () {
+        if (_disposed) return; // eşleşme bu sırada kapatılmış olabilir
+        _restartScheduled = false;
         if (_peerId == null) {
           _log(" ⚠️ Peer disconnected during restart countdown");
           return;
         }
-        
+
         _log(" 🚀 Countdown complete - restarting game!");
-        
+
         // Reset retry flags
         _localRetryIntent = false;
         _peerRetryIntent = false;
-        
+
         // Restart the game
         restartGame();
       });
@@ -660,6 +689,14 @@ final class GameEngine {
   }
 
   void _startLeaderRound({required int now}) {
+    // ✅ FIX: Yeni tur başlıyorsa önceki oyundan kalan (duplicate teslimle
+    // geç ulaşmış) retry intent bayattır — birikirse oyun bitince karşının
+    // onayı olmadan tek taraflı restart tetikliyordu.
+    if (_peerRetryIntent) {
+      _log(" 🧹 Stale peer retry intent cleared (new round starting)");
+      _peerRetryIntent = false;
+    }
+
     final rid = _nextRid++;
     // ✅ RANDOM QID: Each round picks a random question
     final qid = questions?.nextQid() ?? _nextQid++;
@@ -725,7 +762,16 @@ final class GameEngine {
 
   void _onRoundStart(RoundStartMessage msg) {
     _log(" 📨 RoundStart rid=${msg.rid}, qid=${msg.qid}");
-    
+
+    // ✅ FIX: Aynı mesajın çift teslimi (BLE send retry) turu sıfırlayıp
+    // oyuncunun yaptığı seçimi siliyordu. Aynı mid ikinci kez gelirse yok say.
+    // (Liderlik devrindeki eşit rid'li FARKLI mesajlar farklı mid taşır,
+    // onlar etkilenmez.)
+    if (msg.mid.isNotEmpty && msg.mid == _lastRoundStartMid) {
+      _log(" ⚠️ Duplicate RoundStart ignored (mid=${msg.mid})");
+      return;
+    }
+
     // Store peer's device ID for future comparisons
     if (msg.leaderId != localDeviceId) {
       _peerActualDeviceId = msg.leaderId;
@@ -759,6 +805,15 @@ final class GameEngine {
     if (cur != null && msg.rid < cur.rid) return; // Old round
 
     _log(" 🆕 ROUND ${msg.rid} START (qid=${msg.qid}, score=${_state.similarity}-${_state.difference})");
+
+    // Duplicate tespiti için kabul edilen mesajın mid'ini sakla.
+    _lastRoundStartMid = msg.mid.isNotEmpty ? msg.mid : null;
+
+    // ✅ FIX: Yeni tur başlıyorsa önceki oyundan kalan retry intent bayattır.
+    if (_peerRetryIntent) {
+      _log(" 🧹 Stale peer retry intent cleared (new round starting)");
+      _peerRetryIntent = false;
+    }
 
     // ✅ FIX: Deadline'ı liderin saatine göre değil, mesajın bize ulaştığı
     // andan itibaren YEREL saatle hesapla. Offline oyunda cihaz saatleri
@@ -1071,6 +1126,7 @@ final class GameEngine {
   }
 
   void _setState(GameState next) {
+    if (_disposed) return; // kapalı controller'a yazma
     if (next == _state) return;
     _state = next;
     _states.add(next);
@@ -1185,8 +1241,12 @@ final class GameEngine {
   }
 
   Future<void> dispose() async {
+    _disposed = true;
     _cancelPendingStartTimer();
     await _states.close();
+    // ✅ FIX: _snapshots hiç kapatılmıyordu; her eşleşmede yeni engine
+    // yaratıldığı için broadcast controller sızıyordu.
+    await _snapshots.close();
   }
 }
 

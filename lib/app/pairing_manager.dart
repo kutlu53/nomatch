@@ -278,8 +278,41 @@ class PairingManager {
       } else if (event is MessageReceived) {
         // perfLog('[TEST-CONN] 📨 Message received: ${event.message.runtimeType}');
         _handleMessageReceived(event.message, event.fromPeerId);
+      } else if (event is P2pErrorEvent) {
+        _handleBleError(event);
       }
     });
+  }
+
+  // ✅ FIX: Ölümcül BLE hataları (bluetooth kapalı, desteklenmiyor, izin yok,
+  // tarama başlatılamadı) daha önce hiç dinlenmiyordu — kullanıcı hiçbir uyarı
+  // görmeden sonsuz tarama animasyonu izliyordu. Aktif eşleşme sırasında bu
+  // hatalar artık başarısız ekranına düşürür (4s sonra otomatik idle'a döner).
+  static const Set<String> _fatalBleErrorCodes = {
+    'bluetooth_off',
+    'ble_not_supported',
+    'permissions_denied',
+    'scan_failed',
+  };
+
+  void _handleBleError(P2pErrorEvent event) {
+    final code = event.details['code'] as String? ?? 'unknown';
+    if (!_fatalBleErrorCodes.contains(code)) {
+      pairingLog('[BLE-ERR] ⚠️ Non-fatal BLE error: $code (${event.message})');
+      return;
+    }
+    // Zaten başarısızken tekrar tetiklemenin anlamı yok.
+    if (_state == PairingState.failed) return;
+    // bluetooth_off adapter dinleyicisinden HER AN gelebilir; kullanıcı boşta
+    // başlangıç ekranındayken başarısız ekranı basma. Diğer fatal kodlar
+    // yalnızca tarama başlatma denemesi sırasında üretilir — event asenkron
+    // ulaştığı için state o an hâlâ idle görünebilir, yine de işlenmeli.
+    if (code == 'bluetooth_off' && _state == PairingState.idle) {
+      pairingLog('[BLE-ERR] ℹ️ bluetooth_off ignored (idle)');
+      return;
+    }
+    pairingLog('[BLE-ERR] ❌ Fatal BLE error during pairing: $code (${event.message})');
+    unawaited(_failPairing(code));
   }
 
   // Nomatch-specific UUIDs
@@ -449,6 +482,18 @@ class PairingManager {
     if (peer.state == PublicPeerState.requested) {
       pairingLog('[PUBLIC] ✅ Accepting request from $peerId');
       await _acceptPublicPairRequest(peerId);
+      return;
+    }
+
+    // ✅ FIX: Aynı anda tek aktif istek. BLE'de tek bağlantı olduğundan,
+    // bir istek beklerken ikinci bir dota dokunulursa connect() no-op kalıyor
+    // ve PairIntent MEVCUT link üzerinden İLK kişiye gidiyordu; ikinci dot
+    // ise sahte "istek gönderildi" durumunda takılı kalıyordu. Yeni istek
+    // için önce mevcut isteği iptal etmek gerekir (aynı dota yeniden dokun).
+    final hasActiveRequest =
+        _discoveredPeers.values.any((p) => p.state == PublicPeerState.requesting);
+    if (hasActiveRequest) {
+      pairingLog('[PUBLIC] ⚠️ Request to $peerId blocked - another request is active');
       return;
     }
 
@@ -692,16 +737,36 @@ class PairingManager {
   void _handlePublicPairReject(String blePeerId) {
     pairingLog('[PUBLIC] ❌ Pair reject received from $blePeerId');
 
-    // requesting veya requested durumundaki peer'ı idle'a döndür
-    for (final key in [..._discoveredPeers.keys]) {
-      final p = _discoveredPeers[key]!;
-      if (p.state == PublicPeerState.requested || p.state == PublicPeerState.requesting) {
-        _timers.cancel('public_request_expire_$key');
-        _timers.cancel('public_pair_timeout');
-        _discoveredPeers[key] = p.copyWith(state: PublicPeerState.idle);
-        pairingLog('[PUBLIC] 🔄 Peer $key reset to idle (reject)');
+    // ✅ FIX: Ret yalnızca reddeden peer'ın isteğini temizlemeli. Eskiden
+    // TÜM requesting/requested peer'lar idle'a dönüyordu — kalabalık ortamda
+    // bir yabancının reddi, başka birine giden bekleyen isteği de siliyordu.
+    String? target;
+    if (_discoveredPeers.containsKey(blePeerId)) {
+      target = blePeerId;
+    } else {
+      // Reject bağlı link üzerinden gelir; key eşleşmezse (namespace farkı)
+      // aktif istekli peer'a düş — tek-aktif-istek kuralı sayesinde tekildir.
+      for (final e in _discoveredPeers.entries) {
+        if (e.value.state == PublicPeerState.requesting ||
+            e.value.state == PublicPeerState.requested) {
+          target = e.key;
+          break;
+        }
       }
     }
+    if (target == null) return;
+
+    final p = _discoveredPeers[target]!;
+    if (p.state != PublicPeerState.requesting &&
+        p.state != PublicPeerState.requested) {
+      return;
+    }
+    _timers.cancel('public_request_expire_$target');
+    if (p.state == PublicPeerState.requesting) {
+      _timers.cancel('public_pair_timeout');
+    }
+    _discoveredPeers[target] = p.copyWith(state: PublicPeerState.idle);
+    pairingLog('[PUBLIC] 🔄 Peer $target reset to idle (reject)');
     _discoveredPeersController.add(_discoveredPeers.values.toList());
   }
   
@@ -808,6 +873,13 @@ class PairingManager {
     
     // Exit discovery mode after short delay (show green state)
     Future.delayed(const Duration(milliseconds: 300), () async {
+      // ✅ FIX: Bu 300ms içinde hardReset()/mod değişimi olduysa alanlar
+      // sıfırlanmıştır; devam edilirse _peerId! null hatası verir veya
+      // sıfırlama sonrası sahte 'connected' state'i yayınlanırdı.
+      if (_peerId != peerId) {
+        pairingLog('[PUBLIC] ⚠️ Pairing completion aborted - state reset during delay');
+        return;
+      }
       _discoveryOnlyMode = false;
       _timers.cancel('discovery_cleanup');
       
@@ -819,8 +891,14 @@ class PairingManager {
         _isLeader = LeaderAlgorithm.selectLeader(deviceId, _peerNativeDeviceId!);
         pairingLog('[PUBLIC] 👑 Leader elected: ${_isLeader ? 'THIS DEVICE' : 'PEER DEVICE'} (native UUIDs)');
       } else {
-        _isLeader = LeaderAlgorithm.selectLeader(deviceId, _peerId!);
-        pairingLog('[PUBLIC] 👑 Leader elected: ${_isLeader ? 'THIS DEVICE' : 'PEER DEVICE'} (BLE IDs)');
+        // ✅ FIX: deviceId (native) ile _peerId (BLE peripheral UUID) farklı
+        // namespace'ler — karşılaştırma iki cihazda ilişkisiz sonuç verir ve
+        // ikisi de follower kalırsa oyun HİÇ başlamaz (deadlock, timeout yok).
+        // Bunun yerine iki taraf da lider olur: GameEngine'in çakışma çözümü
+        // (RoundStart.leaderId, native↔native) fazla lideri deterministik
+        // olarak devre dışı bırakır. Çift follower'ın kurtarıcısı yoktur.
+        _isLeader = true;
+        pairingLog('[PUBLIC] 👑 Peer native ID yok - lider varsayılıyor (çakışma çözümü devreder)');
       }
       
       // Go directly to connected state - UI will trigger game transition
@@ -1256,9 +1334,11 @@ class PairingManager {
       _isLeader = LeaderAlgorithm.selectLeader(deviceId, _peerNativeDeviceId!);
       pairingLog('[CONN] 👑 Leader elected: ${_isLeader ? 'THIS DEVICE' : 'PEER DEVICE'} (using native UUIDs)');
     } else {
-      // Fallback to BLE IDs if peer native ID not yet received
-      _isLeader = LeaderAlgorithm.selectLeader(deviceId, _peerId!);
-      pairingLog('[CONN] 👑 Leader elected: ${_isLeader ? 'THIS DEVICE' : 'PEER DEVICE'} (fallback to BLE IDs)');
+      // ✅ FIX: Native↔BLE kimlik karşılaştırması iki cihazda ilişkisiz sonuç
+      // verir; ikisi de follower kalırsa oyun hiç başlamaz. İki taraf da lider
+      // varsayılır — GameEngine'in çakışma çözümü tek lidere indirir.
+      _isLeader = true;
+      pairingLog('[CONN] 👑 Peer native ID yok - lider varsayılıyor (çakışma çözümü devreder)');
     }
 
     _setState(PairingState.connected);

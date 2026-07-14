@@ -205,6 +205,48 @@ void main() {
     });
   });
 
+  group('Duplicate mesaj korumaları', () {
+    test('aynı mid ile tekrarlanan RoundStart seçimi silmez', () async {
+      final tr = FakeTransport();
+      final e = await bootFollower(tr);
+      final msg = RoundStartMessage(
+        sid: sid,
+        rid: 1,
+        qid: 1,
+        deadlineMs: t0 + 5000,
+        mid: 'round_start-1-abc',
+        leaderId: 'aaaa-peer',
+        topAsset: 'top1',
+        bottomAsset: 'bot1',
+      );
+      e.onP2pMessage(msg);
+      e.onLocalTapTop();
+      // BLE send-retry duplicate teslimi: tur sıfırlanmamalı.
+      e.onP2pMessage(msg);
+      peerSelect(e, 1, 'top');
+      expect(e.state.similarity, 1, reason: 'seçim duplicate ile silinmemeli');
+    });
+
+    test('oyun içinde gelen bayat retry intent sonraki turda temizlenir', () async {
+      final tr = FakeTransport();
+      final e = await bootFollower(tr);
+      startRound(e, 1);
+      // Önceki oyundan kalmış (geç teslim) bayat intent oyun ortasında gelir.
+      e.onP2pMessage(RetryIntentMessage(sid: sid));
+      // Oyunu 5 farklılıkla bitir; aradaki tur başlangıçları intent'i temizler.
+      for (var rid = 1; rid <= 5; rid++) {
+        if (rid > 1) startRound(e, rid);
+        e.onLocalTapTop();
+        peerSelect(e, rid, 'bottom');
+      }
+      expect(e.state.phase, GamePhase.terminalFail);
+      // Yerel retry ister; karşıdan GÜNCEL onay yokken restart olmamalı.
+      e.sendRetryIntent();
+      expect(e.state.phase, GamePhase.terminalFail,
+          reason: 'bayat intent tek taraflı restart tetiklememeli');
+    });
+  });
+
   group('Bağlantı yaşam döngüsü', () {
     test('onPeerDisconnected pairing\'e sıfırlar ve skoru siler', () async {
       final tr = FakeTransport();

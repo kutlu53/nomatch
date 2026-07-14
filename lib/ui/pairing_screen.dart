@@ -354,15 +354,28 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
     }
     
     setState(() => _screenState = ScreenState.scanning);
-    
+
     const maxRetries = 20;
     int retries = 0;
     bool success = false;
-    
-    while (retries < maxRetries && !success && _screenState == ScreenState.scanning) {
+
+    // ✅ FIX: Kullanıcı bu sırada Public sayfasına geçerse (veya ekran
+    // kapanırsa) döngü iptal edilmeli. Eskiden _switchToPublicMode da
+    // _screenState'i scanning yaptığı için döngü fark etmeden radar
+    // start()'ı çağırmaya devam ediyor ve 10 sn sonra stop() ile public
+    // taramasını sessizce öldürüyordu. _modeSwitchVersion her sayfa
+    // geçişinde arttığı için güvenilir bir iptal sinyalidir.
+    final startVersion = _modeSwitchVersion;
+    bool aborted() => !mounted || _modeSwitchVersion != startVersion;
+
+    while (retries < maxRetries &&
+        !success &&
+        !aborted() &&
+        _screenState == ScreenState.scanning) {
       // ✅ FIX: Read isPhoneFlat dynamically from widget state, not captured parameter
       final currentIsFlat = widget.state.isPhoneFlat;
       final result = await widget.pairingManager.start(isPhoneFlat: currentIsFlat);
+      if (aborted()) return; // mod değişti/ekran kapandı: dokunma
       if (result.success) {
         success = true;
         break;
@@ -374,7 +387,7 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
     // ✅ 20 deneme de başarısız oldu (ör. telefon hiç düz konmadı veya BLE
     // başlatılamadı): ekran "scanning" durumunda asılı kalmasın, başlangıç
     // üçgenine geri dön. stop() olası yarım kalmış state/BLE'yi de temizler.
-    if (!success && mounted && _screenState == ScreenState.scanning) {
+    if (!success && !aborted() && _screenState == ScreenState.scanning) {
       await widget.pairingManager.stop();
       if (mounted) {
         setState(() => _screenState = ScreenState.idle);
@@ -599,7 +612,10 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
       top: topInset + Space.md,
       right: Space.lg,
       child: GestureDetector(
-        onTap: isPhoneFlat
+        // ✅ FIX: Kapatmaya HER ZAMAN izin ver. Eskiden telefon düz değilken
+        // düğme tamamen kilitleniyordu; fener açıkken telefonu kaldıran
+        // kullanıcı feneri kapatamıyordu. Açma hâlâ düz konum gerektirir.
+        onTap: (isPhoneFlat || _torchEnabled)
           ? () async {
               setState(() => _torchEnabled = !_torchEnabled);
               if (_torchEnabled) {

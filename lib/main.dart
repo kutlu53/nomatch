@@ -3,6 +3,7 @@ import 'package:flutter/material.dart' hide debugPrint;
 import 'package:flutter/services.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'dart:developer' as dev;
+import 'dart:math' show Random;
 
 import 'core/debug_config.dart';
 import 'app/pairing_manager.dart';
@@ -31,10 +32,19 @@ Future<void> main() async {
   ]);
 
   // Get unique device ID (using UUID from flutter_blue_plus)
-  String appInstanceId = 'nomatch-device'; // fallback
+  // ✅ FIX: Yedek kimlik BENZERSİZ olmalı. Sabit 'nomatch-device' kullanılırsa
+  // iki cihaz da aynı kimliği alabiliyor (identifierForVendor nil dönebilir),
+  // lider seçimi berabere kalıyor ve oyun hiç başlamıyordu.
+  final fallbackId =
+      'nomatch-${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(0xFFFFFF)}';
+  String appInstanceId = fallbackId;
   try {
     final platform = MethodChannel('com.nomatch/ble_advertising');
-    appInstanceId = await platform.invokeMethod('getDeviceId') ?? 'nomatch-device';
+    appInstanceId = await platform.invokeMethod('getDeviceId') ?? fallbackId;
+    // Native taraf da kendi sabit fallback'ini dönebilir; onu da benzersizle değiştir.
+    if (appInstanceId == 'unknown-device' || appInstanceId == 'nomatch-device') {
+      appInstanceId = fallbackId;
+    }
   } catch (e) {
     dev.log('[INIT] ⚠️ Could not get device UUID, using fallback');
   }
