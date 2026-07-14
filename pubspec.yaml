@@ -1,7 +1,7 @@
 name: nomatch
 description: Tap!Match - offline-first P2P split-screen game (no text/icons/sound).
 publish_to: "none"
-version: 1.0.4+4
+version: 1.0.5+5
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
@@ -47,5 +47,6 @@ flutter:
   uses-material-design: true
   assets:
     - assets/questions/
-    - assets/ui/
+    # assets/ui/ kaldırıldı: klasör boş ve git boş klasör takip etmez —
+    # Codemagic'in temiz klonunda var olmayacağı için build'i kırıyordu.
     - assets/branding/
