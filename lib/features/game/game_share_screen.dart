@@ -354,7 +354,12 @@ class _GameShareScreenState extends State<GameShareScreen>
   Widget build(BuildContext context) {
     final hasSelection = _selectedShareKind != null;
 
-    return Scaffold(
+    // ✅ FIX: iOS geri kaydırma jesti kapalı — jestle geri dönülürse alttaki
+    // GameScreen çıkışsız kalıyordu (tap-to-skip kilitli, long-press sadece
+    // playing fazında). Ekrandan çıkış zaten 3sn basılı tutma ile yapılıyor.
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
       backgroundColor: Colors.transparent, // ✅ Ink Plum background shows through
       resizeToAvoidBottomInset: true, // ✅ Klavye açılınca içerik yukarı kayar
       body: GestureDetector(
@@ -704,6 +709,7 @@ class _GameShareScreenState extends State<GameShareScreen>
           ],
         ),
       ),
+      ),
     );
   }
 }
@@ -849,7 +855,12 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    // ✅ FIX: iOS geri kaydırma jesti kapalı — jestle geri dönülürse alttaki
+    // GameShareScreen görünmez fade katmanı + _transitioning bayrağı yüzünden
+    // tamamen kilitleniyordu. Çıkış 2sn basılı tutma (_doReset) ile yapılır.
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
       backgroundColor: Colors.transparent, // ✅ Ink Plum background shows through
       resizeToAvoidBottomInset: false,
       body: GestureDetector(
@@ -954,6 +965,7 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
               ),
           ],
         ),
+      ),
       ),
     );
   }

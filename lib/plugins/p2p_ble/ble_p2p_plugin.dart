@@ -305,6 +305,10 @@ class BleP2pPlugin {
     print('[BLE-SEND] ❌ Send failed after $maxRetries attempts: $lastError');
     dev.log('[BLE-SEND] ❌ Send failed after $maxRetries attempts: $lastError');
     _emitError('send_failed', lastError.toString());
+    // ✅ FIX: Hata sessizce yutulmamalı — keep-alive ve reconnect mekanizmaları
+    // kopukluğu bu exception üzerinden algılıyor. Yutulursa _isConnected true
+    // kalıyor ve yeniden bağlanma hiç tetiklenmiyordu.
+    throw lastError ?? Exception('send failed after $maxRetries attempts');
   }
   
   /// Stop all BLE operations
@@ -763,7 +767,9 @@ class BleP2pPlugin {
     if (_messageChar == null) {
       print('[BLE-SEND] ❌ _messageChar is null! Cannot send');
       dev.log('[BLE-SEND] ❌ _messageChar is null! Cannot send');
-      return;
+      // ✅ FIX: Sessiz dönüş gönderimi "başarılı" gösteriyordu; eş zamanlı
+      // disconnect'te üst katman kopukluğu fark edebilsin diye fırlat.
+      throw Exception('send failed: not connected (characteristic lost)');
     }
     
     print('[BLE-SEND] ✅ _messageChar found: ${_messageChar?.uuid}');

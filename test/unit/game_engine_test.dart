@@ -159,23 +159,49 @@ void main() {
       expect(e.state.difference, 0);
     });
 
-    test('deadline sonrası (madeAtMs çok geç) peer seçimi reddedilir', () async {
+    test('grace kapandıktan sonra gelen peer seçimi sonucu değiştirmez', () async {
       final tr = FakeTransport();
       final e = await bootFollower(tr);
       startRound(e, 1);
       e.onLocalTapTop();
-      // 100ms tolerans var; deadline+200 açıkça geç.
-      peerSelect(e, 1, 'top', at: t0 + 5000 + 200);
-      expect(e.state.similarity, 0, reason: 'geç peer seçimi sayılmamalı');
+      // Grace penceresi (deadline+3000) kapanır → tur farklılıkla kapanır.
+      e.onTick(t0 + 8000);
+      expect(e.state.difference, 1);
+      // Sonradan ulaşan seçim artık kapanmış turu etkileyemez.
+      peerSelect(e, 1, 'top', at: t0 + 4000);
+      expect(e.state.similarity, 0, reason: 'kapanan tur yeniden skorlanmamalı');
+      expect(e.state.difference, 1);
     });
 
-    test('100ms tolerans içindeki peer seçimi kabul edilir', () async {
+    test('madeAtMs geç görünse bile grace içinde ULAŞAN seçim kabul edilir (saat kayması)', () async {
       final tr = FakeTransport();
       final e = await bootFollower(tr);
       startRound(e, 1);
       e.onLocalTapTop();
-      peerSelect(e, 1, 'top', at: t0 + 5000 + 100); // tam sınır
+      // Karşı cihazın saati ileri: madeAtMs deadline'dan çok sonra görünür.
+      // Yerel varış zamanı grace içinde olduğundan seçim sayılmalı.
+      peerSelect(e, 1, 'top', at: t0 + 5000 + 200);
       expect(e.state.similarity, 1);
+    });
+
+    test('liderin deadline damgası saati kaymış olsa bile tur oynanabilir', () async {
+      final tr = FakeTransport();
+      final e = await bootFollower(tr);
+      // Liderin saati bizden ÇOK geride: mesajdaki deadline yerel saate göre
+      // çoktan geçmiş görünüyor. Deadline yerel varış anından hesaplandığı
+      // için tap yine de kabul edilmeli.
+      e.onP2pMessage(RoundStartMessage(
+        sid: sid,
+        rid: 1,
+        qid: 1,
+        deadlineMs: t0 - 100000, // kaymış lider saati
+        leaderId: 'aaaa-peer',
+        topAsset: 'top1',
+        bottomAsset: 'bot1',
+      ));
+      e.onLocalTapTop();
+      final sels = tr.ofType<SelectionMessage>();
+      expect(sels.length, 1, reason: 'yerel deadline kullanılmalı, tap reddedilmemeli');
     });
   });
 

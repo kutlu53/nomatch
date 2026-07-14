@@ -137,7 +137,7 @@ final class GameEngine {
         startAtMs: startAtMs, // ✅ NEW: Schedule synchronized start
         leaderId: localDeviceId, // ✅ NEW: Send our actual device ID
       );
-      transport.send(msg);
+      _send(msg);
       _log(" 📤 Sent GameStartMessage with seed=$_shuffleSeed, startAtMs=$startAtMs, leaderId=$localDeviceId");
     }
     
@@ -247,7 +247,7 @@ final class GameEngine {
         startAtMs: startAtMs,
         leaderId: localDeviceId, // ✅ NEW: Send our actual device ID
       );
-      transport.send(msg);
+      _send(msg);
       _log(" 📤 Sent new GameStartMessage for restart (seed=$_shuffleSeed, leaderId=$localDeviceId)");
       
       // Start first round after delay
@@ -263,6 +263,15 @@ final class GameEngine {
       // ✅ Follower: wait for GameStartMessage from leader
       _log(" 👥 Follower waiting for GameStartMessage from leader (we have larger ID)");
     }
+  }
+
+  // ✅ FIX: Fire-and-forget gönderim yardımcısı. transport.send() artık
+  // bağlantı kopunca exception fırlatıyor; beklemeden gönderilen mesajlarda
+  // bu hatanın unhandled kalmaması için burada yakalanıp loglanır.
+  void _send(P2pMessage msg) {
+    transport
+        .send(msg)
+        .catchError((Object e) => _log(' ⚠️ send failed (${msg.runtimeType}): $e'));
   }
 
   /// ✅ NEW: Send retry intent (called when player presses retry button)
@@ -678,7 +687,7 @@ final class GameEngine {
 
     _setState(_state.copyWith(phase: GamePhase.playing, currentRound: round));
 
-    transport.send(
+    _send(
       RoundStartMessage(
         v: protocolVersion,
         sid: sessionId,
@@ -735,16 +744,33 @@ final class GameEngine {
     
     // Validate message
     if (_peerId == null) return;
-    
+
+    // ✅ FIX: Oyun bittiyse (terminal/share) yeni tur mesajını yok say.
+    // Aksi halde skor ayrışmasında cihaz tekrar playing'e döner ve sayaç
+    // 5'i aşarak oyunun hiç bitmemesine yol açar.
+    if (_state.phase == GamePhase.terminalSuccess ||
+        _state.phase == GamePhase.terminalFail ||
+        _state.phase == GamePhase.share) {
+      _log(" ❌ RoundStart ignored: game already ended (phase=${_state.phase})");
+      return;
+    }
+
     final cur = _state.currentRound;
     if (cur != null && msg.rid < cur.rid) return; // Old round
 
     _log(" 🆕 ROUND ${msg.rid} START (qid=${msg.qid}, score=${_state.similarity}-${_state.difference})");
 
+    // ✅ FIX: Deadline'ı liderin saatine göre değil, mesajın bize ulaştığı
+    // andan itibaren YEREL saatle hesapla. Offline oyunda cihaz saatleri
+    // senkron değildir; saati ileri olan cihazda tüm turlar "süresi dolmuş"
+    // görünüyordu ve oyuncunun hiçbir dokunuşu kabul edilmiyordu.
+    final localNow = _nowMs != 0 ? _nowMs : DateTime.now().millisecondsSinceEpoch;
+    final localDeadlineMs = localNow + roundMs;
+
     final round = CurrentRound(
       rid: msg.rid,
       qid: msg.qid,
-      deadlineMs: msg.deadlineMs,
+      deadlineMs: localDeadlineMs,
       localChoice: null,
       peerChoice: null,
       localFinal: false,
@@ -802,7 +828,7 @@ final class GameEngine {
     _log('[ENGINE] 📊 State AFTER local tap: localFinal=${rr.localFinal}, peerFinal=${rr.peerFinal}, peerChoice=${rr.peerChoice}');
     _setState(_state.copyWith(currentRound: rr));
 
-    transport.send(
+    _send(
       SelectionMessage(
         v: protocolVersion,
         sid: sessionId,
@@ -828,7 +854,7 @@ final class GameEngine {
     );
     _setState(_state.copyWith(currentRound: rr));
 
-    transport.send(
+    _send(
       SelectionMessage(
         v: protocolVersion,
         sid: sessionId,
@@ -869,10 +895,13 @@ final class GameEngine {
       return;
     }
 
-    // Deadline validity.
-    // 100ms tolerans: BLE gecikme + saat senkronizasyon sapmasını karşılar
-    if (msg.madeAtMs > r.deadlineMs + 100) {
-      _log('[ENGINE] ❌ REJECTED: madeAtMs=${msg.madeAtMs} > deadline=${r.deadlineMs} (+100ms tolerans)');
+    // ✅ FIX: madeAtMs karşı cihazın saatiyle damgalıdır ve yerel deadline
+    // ile karşılaştırılamaz (saat kayması yanlış red üretir). Geç kalma
+    // kontrolü yerel VARIŞ zamanına göre yapılır: grace penceresi hâlâ
+    // açıksa seçim kabul edilir; pencere kapandıktan sonra zaten onTick
+    // turu peer=none olarak kapatır.
+    if (_nowMs != 0 && _nowMs > r.deadlineMs + graceWindowMs) {
+      _log('[ENGINE] ❌ REJECTED: arrived after grace window (now=$_nowMs > ${r.deadlineMs + graceWindowMs})');
       return;
     }
 
@@ -972,10 +1001,11 @@ final class GameEngine {
     final totalRoundsPlayed = nextSimilarity + nextDifference;
     _log(" 📊 Score update - similarity=$nextSimilarity, difference=$nextDifference, totalRounds=$totalRoundsPlayed");
     
-    if (nextSimilarity == 5) {
+    // ✅ FIX: '== 5' yerine '>= 5' — sayaç 5'i atlarsa oyun yine de bitsin.
+    if (nextSimilarity >= 5) {
       _log(" 🎉 TERMINAL SUCCESS at round $totalRoundsPlayed");
       nextPhase = GamePhase.terminalSuccess;
-    } else if (nextDifference == 5) {
+    } else if (nextDifference >= 5) {
       _log(" 💔 TERMINAL FAIL at round $totalRoundsPlayed");
       nextPhase = GamePhase.terminalFail;
     } else {
@@ -990,7 +1020,7 @@ final class GameEngine {
       // ✅ NEW: Send game result to peer
       // ✅ FIX: Use _effectiveLeader to account for deferred leadership
       if (_effectiveLeader) {
-        transport.send(
+        _send(
           ShareOfferMessage(
             v: protocolVersion,
             sid: sessionId,
@@ -1123,7 +1153,7 @@ final class GameEngine {
     );
     
     _log('[ENGINE] 📨 BLE üzerinden gönderiliyor...');
-    transport.send(msg);
+    _send(msg);
     _log('[ENGINE] ✅ Gönderme tamamlandı!');
   }
 

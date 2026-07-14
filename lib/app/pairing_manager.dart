@@ -475,7 +475,10 @@ class PairingManager {
         if (p != null && p.state == PublicPeerState.requesting) {
           _discoveredPeers[peerId] = p.copyWith(state: PublicPeerState.idle);
           _discoveredPeersController.add(_discoveredPeers.values.toList());
-          try { blePlugin.send(PairRejectMessage(sid: deviceId, reason: 'timeout')); } catch (_) {}
+          // Senkron try/catch async hatayı yakalayamaz; catchError kullan.
+          blePlugin
+              .send(PairRejectMessage(sid: deviceId, reason: 'timeout'))
+              .catchError((_) {});
         }
       });
     } catch (e) {
