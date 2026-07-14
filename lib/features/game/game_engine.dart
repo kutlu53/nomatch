@@ -453,7 +453,17 @@ final class GameEngine {
       final totalRounds = (_peerSimilarity ?? 0) + (_peerDifference ?? 0);
       final localTotalRounds = _state.similarity + _state.difference;
       _log("🎮 Peer game result - totalRounds=$totalRounds (peer), localTotalRounds=$localTotalRounds (local)");
-      
+
+      // ✅ FIX: Yerel sonuç zaten kesinleşmişse peer'ın sonucu ekranı ezmemeli
+      // — kazanma animasyonu izlerken ekranın 'kaybettin'e dönmesine yol
+      // açıyordu. Peer sayaçları yukarıda yine de saklanır.
+      if (_state.phase == GamePhase.terminalSuccess ||
+          _state.phase == GamePhase.terminalFail ||
+          _state.phase == GamePhase.share) {
+        _log("[ENGINE] ⚠️ Peer game result ignored - local result already terminal (${_state.phase})");
+        return;
+      }
+
       if (_peerDifference != null && _peerDifference! >= 5) {
         if (totalRounds < 5) {
           _log("[ENGINE] ⚠️ SUSPICIOUS: Peer claims 5 differences but total rounds=$totalRounds (ignoring)");

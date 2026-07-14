@@ -4,12 +4,32 @@ import 'question_bank.dart';
 /// Lazy loading question provider - sadece ilk erişimde yüklenir
 class LazyQuestionProvider implements QuestionProvider {
   QuestionProvider? _loaded;
-  bool _loading = false;
-  
+  Future<void>? _loadingFuture;
+
   Future<void> _ensureLoaded() async {
-    if (_loaded != null || _loading) return;
-    _loading = true;
-    
+    if (_loaded != null) return;
+
+    // ✅ FIX: Süren yükleme varsa ona KATIL. Eskiden '_loading true ise hemen
+    // dön' yapılıyordu; reshuffleForSession bu pencerede _loaded'ı null görüp
+    // ikinci bir yükleme başlatıyor, ilk yükleme en son bitince seed'li
+    // bankayı seed'siz kopyayla eziyordu — liderin karıştırma tohumu
+    // sessizce kayboluyordu.
+    final inFlight = _loadingFuture;
+    if (inFlight != null) {
+      await inFlight;
+      return;
+    }
+
+    final future = _doLoad();
+    _loadingFuture = future;
+    try {
+      await future;
+    } finally {
+      _loadingFuture = null;
+    }
+  }
+
+  Future<void> _doLoad() async {
     try {
       questionsLog('lazy loading started');
       _loaded = await ManifestQuestionBank.loadFromAsset(
@@ -20,8 +40,6 @@ class LazyQuestionProvider implements QuestionProvider {
     } catch (e) {
       questionsLog('lazy loading failed: $e');
       _loaded = _FallbackQuestionProvider();
-    } finally {
-      _loading = false;
     }
   }
   

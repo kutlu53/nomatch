@@ -272,10 +272,27 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             setState(() => _exitLongPressActive = true);
             _exitProgressController.forward(from: 0);
             _exitLongPressTimer = Timer(const Duration(seconds: 3), () {
-              if (mounted) widget.onReset();
+              // ✅ FIX: Faz burada YENİDEN kontrol edilir. Basılı tutma son
+              // turda başlayıp bu 3 sn içinde oyun kazanılırsa, eskiden reset
+              // yine de ateşlenip kazanılan oyunu siliyordu.
+              if (!mounted) return;
+              if (_snap?.phase != GamePhase.playing) {
+                _gsLog('[GAME-SCREEN] ⚠️ Exit hold aborted - game ended during hold');
+                setState(() => _exitLongPressActive = false);
+                _exitProgressController.reset();
+                return;
+              }
+              widget.onReset();
             });
           },
           onLongPressEnd: (_) {
+            _exitLongPressTimer?.cancel();
+            _exitProgressController.reverse();
+            if (mounted) setState(() => _exitLongPressActive = false);
+          },
+          // ✅ FIX: Sistem jesti/arama araya girerse onLongPressEnd hiç
+          // gelmez; timer kurulu kalıp saniyeler sonra reset atabilirdi.
+          onLongPressCancel: () {
             _exitLongPressTimer?.cancel();
             _exitProgressController.reverse();
             if (mounted) setState(() => _exitLongPressActive = false);

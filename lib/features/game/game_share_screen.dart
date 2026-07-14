@@ -727,12 +727,17 @@ class _GameShareScreenState extends State<GameShareScreen>
               ),
 
             // ✅ Fade overlay
+            // ✅ FIX: IgnorePointer — animasyon bitince görünmez ama ağaçta
+            // kalan katman dokunuşları yutup ekranı kilitlemesin (sigorta;
+            // swipe-back kapalıyken normalde erişilmez).
             if (_transitioning)
               Positioned.fill(
-                child: FadeTransition(
-                  opacity: _fadeAnimation,
-                  child: Container(
-                    color: InkPlum.base,
+                child: IgnorePointer(
+                  child: FadeTransition(
+                    opacity: _fadeAnimation,
+                    child: Container(
+                      color: InkPlum.base,
+                    ),
                   ),
                 ),
               ),
