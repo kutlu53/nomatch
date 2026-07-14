@@ -73,6 +73,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   // UX-3: Oyun içi uzun basış çıkış
   Timer? _exitLongPressTimer;
   bool _exitLongPressActive = false;
+  // ✅ UI: Basılı tutma halkasının parmak konumu (null → merkez fallback).
+  Offset? _exitLongPressPos;
   late AnimationController _exitProgressController;
 
   @override
@@ -93,10 +95,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 800),
     )..repeat(reverse: true);
 
-    // UX-3: Çıkış uzun basış progress animasyonu
+    // UX-3: Çıkış uzun basış progress animasyonu (süre tüm ekranlarda ortak)
     _exitProgressController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 3),
+      duration: Motion.hold,
     );
     
     // ✅ Listen to connection status
@@ -267,11 +269,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           // UX-3: Oyun sırasında 3 sn uzun basış → çıkış. terminalFail/Success
           // fazlarında _FailureAnimationOverlay / _SuccessAnimationOverlay kendi
           // gesture'larını yakalar; bu handler yalnızca playing fazında devreye girer.
-          onLongPressStart: (_) {
+          onLongPressStart: (details) {
             if (_snap?.phase != GamePhase.playing) return;
-            setState(() => _exitLongPressActive = true);
+            setState(() {
+              _exitLongPressActive = true;
+              // ✅ UI: Halka parmağın olduğu noktada gösterilir.
+              _exitLongPressPos = details.localPosition;
+            });
             _exitProgressController.forward(from: 0);
-            _exitLongPressTimer = Timer(const Duration(seconds: 3), () {
+            _exitLongPressTimer = Timer(Motion.hold, () {
               // ✅ FIX: Faz burada YENİDEN kontrol edilir. Basılı tutma son
               // turda başlayıp bu 3 sn içinde oyun kazanılırsa, eskiden reset
               // yine de ateşlenip kazanılan oyunu siliyordu.
@@ -452,21 +458,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   ),
                 ),
 
-                // UX-3: Uzun basış çıkış — merkezdeki progress ring
+                // UX-3: Uzun basış çıkış — parmağın olduğu noktada progress ring
                 if (_exitLongPressActive)
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: Center(
-                        child: AnimatedBuilder(
-                          animation: _exitProgressController,
-                          builder: (context, _) => ProgressRing(
-                            value: _exitProgressController.value,
-                            size: 80,
-                            color: GameColors.purple,
-                          ),
-                        ),
-                      ),
-                    ),
+                  HoldRingOverlay(
+                    position: _exitLongPressPos,
+                    controller: _exitProgressController,
                   ),
 
                 // ✅ RECONNECT INDICATOR — karartma overlay + merkezde pulse eden turuncu halka

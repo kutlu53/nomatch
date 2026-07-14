@@ -126,6 +126,55 @@ class ProgressRing extends StatelessWidget {
   }
 }
 
+/// Basılı-tutma jestinin ilerleme halkası — bir Stack'in doğrudan çocuğu
+/// olarak kullanılır ve halkayı PARMAĞIN olduğu noktada gösterir.
+/// [position] null ise ekran merkezine düşer (fallback). Konum, halka ekran
+/// dışına taşmasın diye kenarlardan içeri kıstırılır.
+class HoldRingOverlay extends StatelessWidget {
+  final Offset? position;
+  final Animation<double> controller;
+  final double size;
+  final Color color;
+
+  const HoldRingOverlay({
+    super.key,
+    required this.controller,
+    this.position,
+    this.size = 80,
+    this.color = GameColors.purple,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: LayoutBuilder(
+          builder: (context, c) {
+            final ring = AnimatedBuilder(
+              animation: controller,
+              builder: (context, _) => ProgressRing(
+                value: controller.value,
+                size: size,
+                color: color,
+              ),
+            );
+
+            final pos = position;
+            if (pos == null) return Center(child: ring);
+
+            final half = size / 2;
+            final dx = pos.dx.clamp(half, c.maxWidth - half) - half;
+            final dy = pos.dy.clamp(half, c.maxHeight - half) - half;
+            return Stack(
+              children: [Positioned(left: dx, top: dy, child: ring)],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
 class _ProgressRingPainter extends CustomPainter {
   final double value;
   final Color color;

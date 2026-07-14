@@ -50,6 +50,11 @@ class Motion {
   static const Duration slow = Duration(milliseconds: 400);
   static const Duration xslow = Duration(milliseconds: 800);
 
+  /// "Basılı tut ve çık" jestinin süresi — TÜM ekranlarda aynı olmalı
+  /// (oyun, paylaşım, sonuç). Yanlışlıkla tetiklenmeyecek kadar uzun,
+  /// sıkmayacak kadar kısa.
+  static const Duration hold = Duration(milliseconds: 1500);
+
   /// Standart giriş/çıkış eğrisi (Material "standard" muadili).
   static const Curve standard = Curves.easeInOutCubic;
 

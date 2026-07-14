@@ -55,7 +55,9 @@ class _GameShareScreenState extends State<GameShareScreen>
 
   bool _longPressActive = false;
   Timer? _longPressTimer;
-  // ✅ FIX: 3sn basılı tutma çıkışının görsel ilerleme halkası (metinsiz
+  // ✅ UI: Halka parmağın olduğu noktada gösterilir.
+  Offset? _longPressPos;
+  // ✅ FIX: Basılı tutma çıkışının görsel ilerleme halkası (metinsiz
   // uygulamada geri bildirimsiz jest keşfedilemiyordu).
   late AnimationController _longPressProgressController;
   late AnimationController _fadeController;
@@ -128,19 +130,20 @@ class _GameShareScreenState extends State<GameShareScreen>
       curve: Curves.easeOutCubic,
     ));
 
+    // ✅ UI: Kararma 800ms'den 400ms'e — çıkışlar daha çevik hissettirir.
     _fadeController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
+      duration: Motion.slow,
     );
 
     _fadeAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
       CurvedAnimation(parent: _fadeController, curve: Curves.easeInOutCubic),
     );
 
-    // Uzun basma ilerlemesi — 3 saniyede 0.0 → 1.0 (reset jestiyle aynı süre)
+    // Uzun basma ilerlemesi (süre tüm ekranlarda ortak — Motion.hold)
     _longPressProgressController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 3),
+      duration: Motion.hold,
     );
 
     // ✅ Reconnect pulse animation
@@ -303,9 +306,13 @@ class _GameShareScreenState extends State<GameShareScreen>
         _ssLog("[SHARE-SCREEN] 📍 GameShareResultScreen push ediliyor...");
         
         // ShareResultScreen'e push et
+        // ✅ UI: Kararma sonrası jenerik "sağdan kayma" yerine solma + hafif
+        // büyüme — ödül anına yakışan sakin bir giriş.
         Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (context) => GameShareResultScreen(
+          PageRouteBuilder(
+            transitionDuration: Motion.slow,
+            reverseTransitionDuration: Motion.base,
+            pageBuilder: (context, __, ___) => GameShareResultScreen(
               engine: widget.engine,
               peerValue: _peerValue!,
               peerShareKind: (_peerShareKind.toString().contains('phone')
@@ -313,6 +320,17 @@ class _GameShareScreenState extends State<GameShareScreen>
                   : ShareKind.social),
               onReset: widget.onReset,
             ),
+            transitionsBuilder: (_, animation, __, child) {
+              final curved =
+                  CurvedAnimation(parent: animation, curve: Motion.decelerate);
+              return FadeTransition(
+                opacity: curved,
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 0.94, end: 1.0).animate(curved),
+                  child: child,
+                ),
+              );
+            },
           ),
         );
         
@@ -321,14 +339,17 @@ class _GameShareScreenState extends State<GameShareScreen>
     });
   }
 
-  void _onLongPressStart() {
+  void _onLongPressStart(LongPressStartDetails details) {
     _ssLog("[SHARE-SCREEN] Long press başladı");
     _longPressProgressController.forward(from: 0.0);
-    setState(() => _longPressActive = true);
+    setState(() {
+      _longPressActive = true;
+      _longPressPos = details.localPosition;
+    });
 
-    _longPressTimer = Timer(const Duration(seconds: 3), () {
+    _longPressTimer = Timer(Motion.hold, () {
       if (!mounted) return;
-      _ssLog("[SHARE-SCREEN] 3 saniye tutuldu! Reset yapılıyor...");
+      _ssLog("[SHARE-SCREEN] Basılı tutma doldu! Reset yapılıyor...");
       _doReset();
     });
   }
@@ -375,7 +396,7 @@ class _GameShareScreenState extends State<GameShareScreen>
       backgroundColor: Colors.transparent, // ✅ Ink Plum background shows through
       resizeToAvoidBottomInset: true, // ✅ Klavye açılınca içerik yukarı kayar
       body: GestureDetector(
-        onLongPressStart: (_) => _onLongPressStart(),
+        onLongPressStart: _onLongPressStart,
         onLongPressEnd: (_) => _onLongPressEnd(),
         child: Stack(
           children: [
@@ -386,7 +407,12 @@ class _GameShareScreenState extends State<GameShareScreen>
                   // ✅ ÜSTTE: WhatsApp
                   Expanded(
                     child: AnimatedOpacity(
-                      opacity: _hasShared ? 0.3 : 1.0,
+                      // ✅ UI: Paylaşıldıysa 0.3; diğeri seçiliyken hafif geri çekil.
+                      opacity: _hasShared
+                          ? 0.3
+                          : (hasSelection && _selectedShareKind != ShareKind.phone
+                              ? 0.45
+                              : 1.0),
                       duration: Motion.slow,
                       child: GestureDetector(
                       onTapDown: (_) {
@@ -421,9 +447,22 @@ class _GameShareScreenState extends State<GameShareScreen>
                               height: 140,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                color: _selectedShareKind == ShareKind.phone
-                                    ? const Color(0xFF25D366)
-                                    : const Color(0xFF25D366).withValues(alpha: 0.3),
+                                // ✅ UI: Soluk düz renk yerine dolgun marka
+                                // degradesi + ince beyaz halka; seçim glow ve
+                                // ikon ölçeğiyle vurgulanır.
+                                gradient: const LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [Color(0xFF36E27C), Color(0xFF17A24E)],
+                                ),
+                                border: Border.all(
+                                  color: Colors.white.withValues(
+                                    alpha: _selectedShareKind == ShareKind.phone
+                                        ? 0.55
+                                        : 0.22,
+                                  ),
+                                  width: 1.5,
+                                ),
                                 boxShadow: [
                                   BoxShadow(
                                     color: const Color(0xFF25D366).withValues(
@@ -449,8 +488,8 @@ class _GameShareScreenState extends State<GameShareScreen>
                                   duration: Motion.base,
                                   child: SvgPicture.asset(
                                     'assets/branding/whatsapp-icon.svg',
-                                    width: 70,
-                                    height: 70,
+                                    width: 64,
+                                    height: 64,
                                     colorFilter: const ColorFilter.mode(
                                       Colors.white,
                                       BlendMode.srcIn,
@@ -608,7 +647,12 @@ class _GameShareScreenState extends State<GameShareScreen>
                   // ✅ ALTTA: Instagram
                   Expanded(
                     child: AnimatedOpacity(
-                      opacity: _hasShared ? 0.3 : 1.0,
+                      // ✅ UI: Paylaşıldıysa 0.3; diğeri seçiliyken hafif geri çekil.
+                      opacity: _hasShared
+                          ? 0.3
+                          : (hasSelection && _selectedShareKind != ShareKind.social
+                              ? 0.45
+                              : 1.0),
                       duration: Motion.slow,
                       child: GestureDetector(
                       onTapDown: (_) {
@@ -639,12 +683,28 @@ class _GameShareScreenState extends State<GameShareScreen>
                               height: 140,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                color: _selectedShareKind == ShareKind.social
-                                    ? const Color(0xFFE4405F)
-                                    : const Color(0xFFE4405F).withValues(alpha: 0.3),
+                                // ✅ UI: Instagram'ın resmi degrade kimliği
+                                // (sarı→pembe→mor, sol-alt → sağ-üst).
+                                gradient: const LinearGradient(
+                                  begin: Alignment.bottomLeft,
+                                  end: Alignment.topRight,
+                                  colors: [
+                                    Color(0xFFF9CE34),
+                                    Color(0xFFEE2A7B),
+                                    Color(0xFF6228D7),
+                                  ],
+                                ),
+                                border: Border.all(
+                                  color: Colors.white.withValues(
+                                    alpha: _selectedShareKind == ShareKind.social
+                                        ? 0.55
+                                        : 0.22,
+                                  ),
+                                  width: 1.5,
+                                ),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: const Color(0xFFE4405F).withValues(
+                                    color: const Color(0xFFEE2A7B).withValues(
                                       alpha: _selectedShareKind == ShareKind.social
                                           ? 0.5
                                           : 0.2,
@@ -667,8 +727,8 @@ class _GameShareScreenState extends State<GameShareScreen>
                                   duration: Motion.base,
                                   child: SvgPicture.asset(
                                     'assets/branding/instagram-icon.svg',
-                                    width: 70,
-                                    height: 70,
+                                    width: 64,
+                                    height: 64,
                                     colorFilter: const ColorFilter.mode(
                                       Colors.white,
                                       BlendMode.srcIn,
@@ -708,22 +768,11 @@ class _GameShareScreenState extends State<GameShareScreen>
                 ),
               ),
 
-            // ✅ FIX: 3sn basılı tutma ilerlemesi — kardeş ekranlardaki
-            // ProgressRing deseniyle aynı görsel geri bildirim.
+            // ✅ Basılı tutma ilerlemesi — halka parmağın olduğu noktada.
             if (_longPressActive)
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: Center(
-                    child: AnimatedBuilder(
-                      animation: _longPressProgressController,
-                      builder: (context, _) => ProgressRing(
-                        value: _longPressProgressController.value,
-                        size: 80,
-                        color: GameColors.purple,
-                      ),
-                    ),
-                  ),
-                ),
+              HoldRingOverlay(
+                position: _longPressPos,
+                controller: _longPressProgressController,
               ),
 
             // ✅ Fade overlay
@@ -773,9 +822,16 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
   bool _copied = false;
   bool _longPressActive = false;
   Timer? _longPressTimer;
+  // ✅ UI: Halka parmağın olduğu noktada gösterilir.
+  Offset? _longPressPos;
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
   late AnimationController _progressController;
+  // ✅ UI: Kartın giriş animasyonu (fade + easeOutBack pop).
+  late AnimationController _entryController;
+  late Animation<double> _cardScale;
+  late Animation<double> _cardFade;
+  late Animation<double> _iconScale;
   bool _transitioning = false;
 
   @override
@@ -783,23 +839,48 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
     super.initState();
     _ssLog("[SHARE-RESULT] 📱 Sonuç ekranı açıldı: ${widget.peerValue}");
 
+    // ✅ UI: Kararma 800ms'den 400ms'e — eve dönüş daha çevik.
     _fadeController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 800),
+      duration: Motion.slow,
     );
 
     // ✅ FIX: 0 → 1 (karanlığa geçiş). Reset'te ekran yumuşakça kararıp
     // kapanır; eskiden animasyon hiçbir widget'a bağlı olmadığından
-    // kullanıcı 800ms donmuş ekrana bakıyordu.
+    // kullanıcı donmuş ekrana bakıyordu.
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _fadeController, curve: Curves.easeInOutCubic),
     );
 
-    // Uzun basma ilerlemesi için — 2 saniyede 0.0 → 1.0
+    // Uzun basma ilerlemesi (süre tüm ekranlarda ortak — Motion.hold)
     _progressController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 2),
+      duration: Motion.hold,
     );
+
+    // ✅ UI: Ödül kartının girişi — kart yumuşak pop, ikon hafif gecikmeli
+    // ikinci bir pop yapar (route geçişinin üstüne katmanlı koreografi).
+    _entryController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 550),
+    );
+    _cardFade = CurvedAnimation(
+      parent: _entryController,
+      curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+    );
+    _cardScale = Tween<double>(begin: 0.9, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _entryController,
+        curve: const Interval(0.0, 0.7, curve: Curves.easeOutBack),
+      ),
+    );
+    _iconScale = Tween<double>(begin: 0.7, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _entryController,
+        curve: const Interval(0.25, 1.0, curve: Curves.easeOutBack),
+      ),
+    );
+    _entryController.forward();
   }
 
   @override
@@ -807,6 +888,7 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
     _longPressTimer?.cancel();
     _fadeController.dispose();
     _progressController.dispose();
+    _entryController.dispose();
     super.dispose();
   }
 
@@ -858,14 +940,17 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
     }
   }
 
-  void _onLongPressStart() {
+  void _onLongPressStart(LongPressStartDetails details) {
     _ssLog("[SHARE-RESULT] Long press başladı");
-    _progressController.forward();
-    setState(() => _longPressActive = true);
+    _progressController.forward(from: 0.0);
+    setState(() {
+      _longPressActive = true;
+      _longPressPos = details.localPosition;
+    });
 
-    _longPressTimer = Timer(const Duration(seconds: 2), () {
+    _longPressTimer = Timer(Motion.hold, () {
       if (!mounted) return;
-      _ssLog("[SHARE-RESULT] 2 saniye tutuldu - Reset!");
+      _ssLog("[SHARE-RESULT] Basılı tutma doldu - Reset!");
       _doReset();
     });
   }
@@ -906,100 +991,152 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
         // sadece ortadaki bilgi kutusunda değil, ekranın her yerinde çalışsın.
         behavior: HitTestBehavior.opaque,
         onTap: _copyToClipboard,
-        onLongPressStart: (_) => _onLongPressStart(),
+        onLongPressStart: _onLongPressStart,
         onLongPressEnd: (_) => _onLongPressEnd(),
         child: Stack(
           children: [
             // ✅ TAM ORTADA: İKON + BİLGİ (tıklanınca link açılır)
             SafeArea(
               child: Center(
-                child: GestureDetector(
-                  onTap: _openLink,
-                  onDoubleTap: _copyToClipboard, // Çift tıkla kopyala
-                  child: AnimatedContainer(
-                    duration: Motion.fast,
-                    padding: const EdgeInsets.symmetric(horizontal: Space.xl, vertical: Space.lg),
-                    decoration: BoxDecoration(
-                      color: InkPlum.surface.withValues(alpha: _copied ? 0.9 : 0.6),
-                      borderRadius: Radii.brMd,
-                      border: Border.all(
-                        color: _copied ? GameColors.lime.withValues(alpha: 0.6) : GameColors.borderSubtle,
-                        width: 2,
-                      ),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // ✅ İkon (WhatsApp veya Instagram)
-                        Container(
-                          width: 80,
-                          height: 80,
+                // ✅ UI: Kart girişte yumuşak pop yapar (fade + easeOutBack).
+                child: FadeTransition(
+                  opacity: _cardFade,
+                  child: ScaleTransition(
+                    scale: _cardScale,
+                    child: GestureDetector(
+                      onTap: _openLink,
+                      onDoubleTap: _copyToClipboard, // Çift tıkla kopyala
+                      // ✅ UI: Platform renginde degrade kenarlık — "ödül kartı"
+                      // hissi. Kopyalanınca kenarlık lime'a döner.
+                      child: AnimatedContainer(
+                        duration: Motion.fast,
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(Radii.lg + 2),
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: _copied
+                                ? [
+                                    GameColors.lime.withValues(alpha: 0.9),
+                                    GameColors.lime.withValues(alpha: 0.45),
+                                  ]
+                                : (widget.peerShareKind == ShareKind.phone
+                                    ? [
+                                        const Color(0xFF36E27C)
+                                            .withValues(alpha: 0.85),
+                                        const Color(0xFF17A24E)
+                                            .withValues(alpha: 0.35),
+                                      ]
+                                    : [
+                                        const Color(0xFFF9CE34)
+                                            .withValues(alpha: 0.85),
+                                        const Color(0xFFEE2A7B)
+                                            .withValues(alpha: 0.6),
+                                        const Color(0xFF6228D7)
+                                            .withValues(alpha: 0.35),
+                                      ]),
+                          ),
+                          boxShadow: Elevation.e2,
+                        ),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: Space.xl, vertical: Space.lg),
                           decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: widget.peerShareKind == ShareKind.phone
-                                ? const Color(0xFF25D366) // WhatsApp yeşili
-                                : const Color(0xFFE4405F), // Instagram pembe
-                            boxShadow: [
-                              BoxShadow(
-                                color: (widget.peerShareKind == ShareKind.phone
-                                        ? const Color(0xFF25D366)
-                                        : const Color(0xFFE4405F))
-                                    .withValues(alpha: 0.4),
-                                blurRadius: 20,
-                                offset: const Offset(0, 8),
+                            color: InkPlum.surface.withValues(alpha: 0.92),
+                            borderRadius: Radii.brLg,
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // ✅ İkon — kart otururken hafif gecikmeli pop.
+                              ScaleTransition(
+                                scale: _iconScale,
+                                child: Container(
+                                  width: 80,
+                                  height: 80,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    // ✅ UI: Paylaşım ekranındaki dairelerle aynı
+                                    // marka degradeleri.
+                                    gradient: widget.peerShareKind == ShareKind.phone
+                                        ? const LinearGradient(
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                            colors: [
+                                              Color(0xFF36E27C),
+                                              Color(0xFF17A24E),
+                                            ],
+                                          )
+                                        : const LinearGradient(
+                                            begin: Alignment.bottomLeft,
+                                            end: Alignment.topRight,
+                                            colors: [
+                                              Color(0xFFF9CE34),
+                                              Color(0xFFEE2A7B),
+                                              Color(0xFF6228D7),
+                                            ],
+                                          ),
+                                    border: Border.all(
+                                      color: Colors.white.withValues(alpha: 0.25),
+                                      width: 1.5,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: (widget.peerShareKind ==
+                                                    ShareKind.phone
+                                                ? const Color(0xFF25D366)
+                                                : const Color(0xFFEE2A7B))
+                                            .withValues(alpha: 0.4),
+                                        blurRadius: 20,
+                                        offset: const Offset(0, 8),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Center(
+                                    child: SvgPicture.asset(
+                                      widget.peerShareKind == ShareKind.phone
+                                          ? 'assets/branding/whatsapp-icon.svg'
+                                          : 'assets/branding/instagram-icon.svg',
+                                      width: 40,
+                                      height: 40,
+                                      colorFilter: const ColorFilter.mode(
+                                        Colors.white,
+                                        BlendMode.srcIn,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: Space.lg),
+
+                              // ✅ Bilgi (telefon veya kullanıcı adı)
+                              Text(
+                                widget.peerValue,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: GameColors.interactiveLight,
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.5,
+                                ),
                               ),
                             ],
                           ),
-                          child: Center(
-                            child: SvgPicture.asset(
-                              widget.peerShareKind == ShareKind.phone
-                                  ? 'assets/branding/whatsapp-icon.svg'
-                                  : 'assets/branding/instagram-icon.svg',
-                              width: 40,
-                              height: 40,
-                              colorFilter: const ColorFilter.mode(
-                                Colors.white,
-                                BlendMode.srcIn,
-                              ),
-                            ),
-                          ),
                         ),
-                        
-                        const SizedBox(height: Space.lg),
-                        
-                        // ✅ Bilgi (telefon veya kullanıcı adı)
-                        Text(
-                          widget.peerValue,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: GameColors.interactiveLight,
-                            fontSize: 28,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
 
-            // Uzun basma ilerlemesi
+            // Uzun basma ilerlemesi — halka parmağın olduğu noktada.
             if (_longPressActive)
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: Center(
-                    child: AnimatedBuilder(
-                      animation: _progressController,
-                      builder: (context, _) => ProgressRing(
-                        value: _progressController.value,
-                        size: 80,
-                        color: GameColors.purple,
-                      ),
-                    ),
-                  ),
-                ),
+              HoldRingOverlay(
+                position: _longPressPos,
+                controller: _progressController,
               ),
 
             // ✅ FIX: Reset karartması — _doReset'in 800ms'lik animasyonu
