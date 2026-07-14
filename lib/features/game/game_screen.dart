@@ -353,6 +353,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                           terminal: snap.terminal,
                           asset: snap.topAsset,
                           availableHeight: halfH, // ✅ Ekran yarısı
+                          // ✅ UI: Kalıcı seçim vurgusu — yerel oyuncu bu kartı
+                          // seçtiyse mor kenarlık/glow, diğerini seçtiyse sönme.
+                          isChosen: snap.localChoice == 'top',
+                          dimmed: snap.localChoice == 'bottom',
                           onTap: () {
                             // ✅ Round kontrolü
                             if (_selectedInRound == currentRound) {
@@ -396,6 +400,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                           terminal: snap.terminal,
                           asset: snap.bottomAsset,
                           availableHeight: halfH, // ✅ Ekran yarısı
+                          // ✅ UI: Kalıcı seçim vurgusu (bkz. üst kart).
+                          isChosen: snap.localChoice == 'bottom',
+                          dimmed: snap.localChoice == 'top',
                           onTap: () {
                             // ✅ Round kontrolü
                             if (_selectedInRound == currentRound) {
@@ -416,21 +423,33 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 ),
 
                 // ✅ SUCCESS ANIMATION OVERLAY (RepaintBoundary: isolate from main tree)
-                if (snap?.phase == GamePhase.terminalSuccess)
-                  Positioned.fill(
-                    child: RepaintBoundary(
-                      child: _SuccessAnimationOverlay(
-                        // UX-4: Tapa animasyonu atla, anında share ekranına geç.
-                        onTap: () {
-                          _shareTimer?.cancel();
-                          if (!_shareScreenRequested) {
-                            _shareScreenRequested = true;
-                            widget.onOpenShare();
-                          }
-                        },
-                      ),
+                // ✅ UI: Kaybetme overlay'i gibi 300ms solmayla girer (ham
+                // kesme yerine); görünmezken dokunuşları engellemez.
+                Positioned.fill(
+                  child: IgnorePointer(
+                    ignoring: snap?.phase != GamePhase.terminalSuccess,
+                    child: AnimatedSwitcher(
+                      duration: Motion.base,
+                      transitionBuilder: (child, animation) =>
+                          FadeTransition(opacity: animation, child: child),
+                      child: snap?.phase == GamePhase.terminalSuccess
+                          ? RepaintBoundary(
+                              key: const ValueKey('success_overlay'),
+                              child: _SuccessAnimationOverlay(
+                                // UX-4: Tapa animasyonu atla, anında share ekranına geç.
+                                onTap: () {
+                                  _shareTimer?.cancel();
+                                  if (!_shareScreenRequested) {
+                                    _shareScreenRequested = true;
+                                    widget.onOpenShare();
+                                  }
+                                },
+                              ),
+                            )
+                          : const SizedBox.shrink(key: ValueKey('no_success')),
                     ),
                   ),
+                ),
 
                 // ✅ FAILURE ANIMATION OVERLAY (RepaintBoundary: isolate from main tree)
                 // ✅ Also show during 'restarting' phase (green arrow before game starts)
@@ -519,6 +538,12 @@ class _HalfBoard extends StatefulWidget {
   final VoidCallback? onTap;
   final double availableHeight; // ✅ Ekran yarısının yüksekliği
 
+  /// ✅ UI: Yerel oyuncu BU kartı seçti — tur çözülene kadar kalıcı vurgu.
+  final bool isChosen;
+
+  /// ✅ UI: Yerel oyuncu DİĞER kartı seçti — bu kart hafifçe söner.
+  final bool dimmed;
+
   const _HalfBoard({
     super.key,
     required this.isTop,
@@ -528,6 +553,8 @@ class _HalfBoard extends StatefulWidget {
     this.asset,
     this.onTap,
     this.availableHeight = 400, // Default fallback
+    this.isChosen = false,
+    this.dimmed = false,
   });
 
   @override
@@ -596,8 +623,12 @@ class _HalfBoardState extends State<_HalfBoard> with SingleTickerProviderStateMi
               scale: _pressed ? 0.96 : 1.0,
               duration: const Duration(milliseconds: 50),
               curve: Curves.easeOut,
+              child: AnimatedOpacity(
+              // ✅ UI: Diğer kart seçildiyse bu kart hafifçe geri çekilir.
+              opacity: widget.dimmed ? 0.85 : 1.0,
+              duration: Motion.base,
               child: AnimatedContainer(
-              duration: const Duration(milliseconds: 50),
+              duration: Motion.fast,
               decoration: BoxDecoration(
                 color: InkPlum.surface.withValues(alpha: _pressed ? 0.8 : 0.6),
                 borderRadius: Radii.brLg,
@@ -609,19 +640,24 @@ class _HalfBoardState extends State<_HalfBoard> with SingleTickerProviderStateMi
                     offset: Offset(0, _pressed ? 2 : 8),
                     spreadRadius: _pressed ? 0 : 2,
                   ),
-                  // ✅ Seçim parlaklığı (glow) - sadece basılıyken
-                  if (_pressed)
+                  // ✅ Seçim parlaklığı (glow) - basılıyken VE seçim kalıcıyken.
+                  // Kalıcı vurgu "hangisini seçtim + kaydedildi, bekleniyor"
+                  // mesajını tur çözülene kadar taşır.
+                  if (_pressed || widget.isChosen)
                     BoxShadow(
-                      color: GameColors.purple.withValues(alpha: 0.4),
-                      blurRadius: 20,
+                      color: GameColors.purple
+                          .withValues(alpha: widget.isChosen ? 0.35 : 0.4),
+                      blurRadius: widget.isChosen ? 24 : 20,
                       spreadRadius: 2,
                     ),
                 ],
                 border: Border.all(
-                  color: _pressed 
-                      ? GameColors.borderLight  // Parlak border
-                      : GameColors.borderSubtle,
-                  width: _pressed ? 3 : 2,
+                  color: widget.isChosen
+                      ? GameColors.purple.withValues(alpha: 0.75)
+                      : (_pressed
+                          ? GameColors.borderLight // Parlak border
+                          : GameColors.borderSubtle),
+                  width: (_pressed || widget.isChosen) ? 3 : 2,
                 ),
               ),
               child: ClipRRect(
@@ -650,6 +686,7 @@ class _HalfBoardState extends State<_HalfBoard> with SingleTickerProviderStateMi
                         ),
                 ),
               ),
+            ),
             ),
             ),
           ),
@@ -707,6 +744,13 @@ class _SuccessAnimationOverlayState extends State<_SuccessAnimationOverlay>
   @override
   void initState() {
     super.initState();
+    // ✅ UI: Kazanma anına dokunsal zirve — eşleşme bulma diliyle aynı
+    // (güçlü + kısa aralıkla orta darbe).
+    HapticFeedback.heavyImpact();
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted) HapticFeedback.mediumImpact();
+    });
+
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 3000),
@@ -872,11 +916,14 @@ class _FailureAnimationOverlayState extends State<_FailureAnimationOverlay>
   @override
   void initState() {
     super.initState();
+    // ✅ UI: Kaybetme anına dokunsal geri bildirim (orta darbe).
+    HapticFeedback.mediumImpact();
+
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 3000),
     );
-    
+
     _buttonController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 400),
@@ -1079,24 +1126,40 @@ class _FailureAnimationOverlayState extends State<_FailureAnimationOverlay>
                                 width: 2,
                               ),
                             ),
-                            child: widget.engine.localRetryIntent
-                                ? AnimatedBuilder(
-                                    animation: _waitingPulseController,
-                                    builder: (context, child) {
-                                      return Icon(
-                                        Icons.check_rounded,
-                                        color: GameColors.retryActive.withValues(
-                                          alpha: 0.7 + _waitingPulseController.value * 0.3,
+                            // ✅ UI: Material ikonları yerine el yapımı çizimler —
+                            // "metin yok, ikon yok" ilkesi ve gönder oku/üçgenle
+                            // aynı görsel dil.
+                            child: Center(
+                              child: SizedBox(
+                                width: 32,
+                                height: 32,
+                                child: widget.engine.localRetryIntent
+                                    ? AnimatedBuilder(
+                                        animation: _waitingPulseController,
+                                        builder: (context, child) {
+                                          return CustomPaint(
+                                            painter: _CheckMarkPainter(
+                                              color: GameColors.retryActive
+                                                  .withValues(
+                                                alpha: 0.7 +
+                                                    _waitingPulseController
+                                                            .value *
+                                                        0.3,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      )
+                                    : CustomPaint(
+                                        painter: _RetryArrowPainter(
+                                          color: GameColors.interactiveLight
+                                              .withValues(
+                                                  alpha:
+                                                      GameColors.opacityHigh),
                                         ),
-                                        size: 36,
-                                      );
-                                    },
-                                  )
-                                : Icon(
-                                    Icons.refresh_rounded,
-                                    color: GameColors.interactiveLight.withValues(alpha: GameColors.opacityHigh),
-                                    size: 36,
-                                  ),
+                                      ),
+                              ),
+                            ),
                           ),
                         ),
                       ],
@@ -1213,6 +1276,82 @@ class _FailureAnimationPainter extends CustomPainter {
 }
 
 // ✅ NEW: Green triangle painter for restart animation (matches radar screen)
+/// ✅ UI: Material Icons.refresh yerine el yapımı dairesel yenileme oku.
+class _RetryArrowPainter extends CustomPainter {
+  final Color color;
+  const _RetryArrowPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final r = math.min(size.width, size.height) * 0.36;
+    final stroke = math.min(size.width, size.height) * 0.11;
+
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.round;
+
+    // ~303 derecelik yay; tepede ok başı için ~57 derecelik boşluk kalır.
+    const startAngle = -math.pi / 2 + 0.5;
+    const sweep = math.pi * 2 - 1.0;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: r),
+      startAngle,
+      sweep,
+      false,
+      paint,
+    );
+
+    // Ok başı — yayın bitişinde, hareket (teğet) yönünde.
+    const endAngle = startAngle + sweep;
+    final tip = center + Offset(math.cos(endAngle), math.sin(endAngle)) * r;
+    final dir = Offset(
+      math.cos(endAngle + math.pi / 2),
+      math.sin(endAngle + math.pi / 2),
+    );
+    final normal = Offset(math.cos(endAngle), math.sin(endAngle));
+    final headLen = r * 0.45;
+    canvas.drawLine(
+        tip, tip - dir * headLen + normal * (headLen * 0.7), paint);
+    canvas.drawLine(
+        tip, tip - dir * headLen - normal * (headLen * 0.7), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _RetryArrowPainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
+/// ✅ UI: Material Icons.check yerine el yapımı onay tiki.
+class _CheckMarkPainter extends CustomPainter {
+  final Color color;
+  const _CheckMarkPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final r = math.min(size.width, size.height) / 2;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = r * 0.22
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+
+    final path = Path()
+      ..moveTo(center.dx - r * 0.55, center.dy + r * 0.05)
+      ..lineTo(center.dx - r * 0.1, center.dy + r * 0.5)
+      ..lineTo(center.dx + r * 0.6, center.dy - r * 0.4);
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CheckMarkPainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
 class _GreenTrianglePainter extends CustomPainter {
   final double opacity;
 
