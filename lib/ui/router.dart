@@ -19,10 +19,14 @@ class AppRouter extends StatelessWidget {
   final PairingManager pairingManager;
   final AppViewState viewState;
 
+  /// Üçgene uzun basınca onboarding'i yeniden oynatır (AppShell yönetir).
+  final VoidCallback? onReplayOnboarding;
+
   const AppRouter({
     super.key,
     required this.pairingManager,
     required this.viewState,
+    this.onReplayOnboarding,
   });
 
   @override
@@ -38,7 +42,11 @@ class AppRouter extends StatelessWidget {
       PairingState.preConnected ||
       PairingState.headingValidating ||
       PairingState.connected =>
-        PairingScreen(pairingManager: pairingManager, state: viewState),
+        PairingScreen(
+          pairingManager: pairingManager,
+          state: viewState,
+          onReplayOnboarding: onReplayOnboarding,
+        ),
 
       // Game states -> GameScreen
       PairingState.game ||

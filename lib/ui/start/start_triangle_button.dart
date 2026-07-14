@@ -35,11 +35,15 @@ class StartTriangleButton extends StatefulWidget {
   final TriangleState triangleState;
   final VoidCallback onTap;
 
+  /// Uzun basma (onboarding'i yeniden izleme). null ise jest devre dışı.
+  final VoidCallback? onLongPress;
+
   const StartTriangleButton({
     super.key,
     required this.isScanning,
     this.triangleState = TriangleState.idle,
     required this.onTap,
+    this.onLongPress,
   });
 
   @override
@@ -199,6 +203,17 @@ class _StartTriangleButtonState extends State<StartTriangleButton>
     _scaleController.reverse();
   }
 
+  void _onLongPress() {
+    // Uzun basma kazandığında tap iptal edilir (onTapCancel çoktan geldi);
+    // basılı ölçeği bırak ve belirgin bir haptikle jesti onayla.
+    if (_isPressed) {
+      _isPressed = false;
+      _scaleController.reverse();
+    }
+    HapticFeedback.mediumImpact();
+    widget.onLongPress?.call();
+  }
+
   @override
   Widget build(BuildContext context) {
     final isConnectedOrMatched = widget.triangleState == TriangleState.connected || 
@@ -209,6 +224,7 @@ class _StartTriangleButtonState extends State<StartTriangleButton>
         onTapDown: _onTapDown,
         onTapUp: _onTapUp,
         onTapCancel: _onTapCancel,
+        onLongPress: widget.onLongPress != null ? _onLongPress : null,
         behavior: HitTestBehavior.opaque,
         child: SizedBox(
           width: 140,

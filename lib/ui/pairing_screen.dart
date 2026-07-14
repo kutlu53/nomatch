@@ -29,10 +29,14 @@ class PairingScreen extends StatefulWidget {
   final PairingManager pairingManager;
   final AppViewState state;
 
+  /// Üçgene uzun basınca onboarding'i yeniden oynatır.
+  final VoidCallback? onReplayOnboarding;
+
   const PairingScreen({
     super.key,
     required this.pairingManager,
     required this.state,
+    this.onReplayOnboarding,
   });
 
   @override
@@ -630,6 +634,8 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
             isScanning: isScanning && !isMatched,
             triangleState: isMatched ? TriangleState.matched : triangleState,
             onTap: isMatched ? () {} : () => _handleStartTap(isPhoneFlat),
+            // Uzun basma = onboarding'i yeniden izle (eşleşmişken devre dışı)
+            onLongPress: isMatched ? null : widget.onReplayOnboarding,
           ),
         ),
       ),
