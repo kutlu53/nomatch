@@ -229,15 +229,25 @@ import CoreMotion
   // Combines: Accelerometer + Gyroscope + Magnetometer
   private var headingBuffer: [Double] = []
   private let headingBufferSize = 5
-  
+  // ✅ FIX: Timer normal bir stored property'de tutulur. Eskiden
+  // objc_setAssociatedObject'e Swift string literal'i anahtar olarak
+  // veriliyordu — köprülenen iki literal aynı pointer olmayabildiği için
+  // stopCompass timer'ı bulamıyor, her eşleşme denemesinde yeni bir 5 Hz
+  // timer birikiyordu (BLE'yi boğan heading seli).
+  private var compassTimer: Timer?
+
   private func startCompass(_ channel: FlutterMethodChannel) {
     print("[FUSION-iOS] 🧭 Starting Sensor Fusion (CMDeviceMotion.attitude)")
-    
+
+    // ✅ FIX: Yenisini kurmadan önce varsa eski timer'ı kapat.
+    compassTimer?.invalidate()
+    compassTimer = nil
+
     // Use xMagneticNorthZVertical for absolute heading reference
     // ⚠️ 200ms interval (5 Hz) - faster rates overload BLE and cause disconnection
     motionManager.deviceMotionUpdateInterval = 0.2
     motionManager.startDeviceMotionUpdates(using: .xMagneticNorthZVertical)
-    
+
     let timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
       guard let self = self,
             let motion = self.motionManager.deviceMotion else { return }
@@ -263,7 +273,7 @@ import CoreMotion
     }
     
     // Store timer to prevent deallocation
-    objc_setAssociatedObject(self, "compassTimer", timer, .OBJC_ASSOCIATION_RETAIN)
+    compassTimer = timer
     print("[FUSION-iOS] ✅ Sensor Fusion started")
   }
   
@@ -300,13 +310,11 @@ import CoreMotion
   private func stopCompass() {
     motionManager.stopDeviceMotionUpdates()
     headingBuffer.removeAll()
-    
+
     // Stop timer
-    if let timer = objc_getAssociatedObject(self, "compassTimer") as? Timer {
-      timer.invalidate()
-      objc_setAssociatedObject(self, "compassTimer", nil, .OBJC_ASSOCIATION_RETAIN)
-    }
-    
+    compassTimer?.invalidate()
+    compassTimer = nil
+
     print("[FUSION-iOS] ✅ Sensor Fusion stopped")
   }
   

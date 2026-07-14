@@ -435,9 +435,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   ),
                 ),
 
-                // GamePhase.share ve terminal engine tarafından hiç set edilmiyor;
-                // _ResultOverlay şu an erişilemez durum — ileride kullanılırsa açılacak.
-
                 // UX-3: Uzun basış çıkış — merkezdeki progress ring
                 if (_exitLongPressActive)
                   Positioned.fill(
@@ -680,88 +677,6 @@ class _BlobPainter extends CustomPainter {
   bool shouldRepaint(covariant _BlobPainter oldDelegate) => oldDelegate.color != color;
 }
 
-
-class _ResultOverlay extends StatefulWidget {
-  final RoundTerminal terminal;
-  const _ResultOverlay({required this.terminal});
-
-  @override
-  State<_ResultOverlay> createState() => _ResultOverlayState();
-}
-
-class _ResultOverlayState extends State<_ResultOverlay> with SingleTickerProviderStateMixin {
-  late final AnimationController _a = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 800),
-  )..repeat(reverse: true);
-
-  @override
-  void dispose() {
-    _a.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final base = switch (widget.terminal) {
-      RoundTerminal.match => GameColors.match.withValues(alpha: 0.18),
-      RoundTerminal.mismatch => GameColors.mismatch.withValues(alpha: 0.18),
-      RoundTerminal.localNoSelection => GameColors.localTimeout.withValues(alpha: 0.16),
-      RoundTerminal.peerNoSelection => GameColors.peerTimeout.withValues(alpha: 0.16),
-      RoundTerminal.bothNoSelection => GameColors.bothTimeout.withValues(alpha: 0.12),
-    };
-
-    return AnimatedBuilder(
-      animation: _a,
-      builder: (context, _) {
-        return ColoredBox(
-          color: base.withValues(alpha: base.a * (0.65 + 0.35 * _a.value)),
-          child: Center(
-            child: Transform.scale(
-              scale: 0.92 + 0.06 * _a.value,
-              child: CustomPaint(
-                painter: _ResultMarkPainter(terminal: widget.terminal),
-                size: const Size.square(240),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _ResultMarkPainter extends CustomPainter {
-  final RoundTerminal terminal;
-  const _ResultMarkPainter({required this.terminal});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final c = Offset(size.width / 2, size.height / 2);
-    final r = math.min(size.width, size.height) / 2;
-
-    final color = switch (terminal) {
-      RoundTerminal.match => GameColors.match.withValues(alpha: GameColors.opacityHigh),
-      RoundTerminal.mismatch => GameColors.mismatch.withValues(alpha: GameColors.opacityHigh),
-      RoundTerminal.localNoSelection => GameColors.localTimeout.withValues(alpha: GameColors.opacityHigh),
-      RoundTerminal.peerNoSelection => GameColors.peerTimeout.withValues(alpha: GameColors.opacityHigh),
-      RoundTerminal.bothNoSelection => GameColors.bothTimeout.withValues(alpha: GameColors.opacityMedium),
-    };
-
-    final p = Paint()..color = color;
-    final ring = Paint()
-      ..color = color.withValues(alpha: color.a * 0.4)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 12;
-
-    canvas.drawCircle(c, r * 0.55, ring);
-    canvas.drawCircle(c.translate(r * 0.10, -r * 0.08), r * 0.18, p);
-    canvas.drawCircle(c.translate(-r * 0.12, r * 0.10), r * 0.14, p..color = color.withValues(alpha: color.a * 0.75));
-  }
-
-  @override
-  bool shouldRepaint(covariant _ResultMarkPainter oldDelegate) => oldDelegate.terminal != terminal;
-}
 
 // ✅ NEW: Success animation overlay
 class _SuccessAnimationOverlay extends StatefulWidget {

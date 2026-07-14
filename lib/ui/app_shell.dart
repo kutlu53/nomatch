@@ -104,10 +104,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     
     // ✅ Dispose sensor manager (async - but fire and forget is ok in dispose)
     unawaited(_sensorManager.dispose());
-    
-    // ✅ Dispose pairing manager
-    unawaited(widget.pairingManager.dispose());
-    
+
+    // ✅ FIX: pairingManager burada dispose EDİLMEZ — sahibi main.dart
+    // (_MyAppState.dispose zaten kapatıyor). Çift dispose bugün zararsız
+    // görünse de kapalı controller'a yazma hatalarına zemin hazırlıyordu.
+
     super.dispose();
   }
 

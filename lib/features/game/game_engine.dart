@@ -1160,8 +1160,10 @@ final class GameEngine {
         // This ensures UI gets notified of phase change to terminalSuccess/terminalFail/share
         dev.log("ENGINE: Emitting terminal state snapshot - phase=${next.phase}");
         // Create a minimal snapshot for terminal state
-        // Use the last known round number if available, otherwise use 0
-        final lastRid = _nextRid - 1; // Last round that was played
+        // ✅ FIX: _nextRid yalnızca liderde ilerler; follower terminal
+        // snapshot'ında hep 0 görünüyordu. Oynanan tur sayısı skorlardan
+        // türetilir (her tur ya benzerlik ya farklılık sayar).
+        final lastRid = next.similarity + next.difference;
         final snap = RoundSnapshot(
           sessionId: sessionId,
           peerId: _peerId!,

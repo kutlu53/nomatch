@@ -806,6 +806,27 @@ class PairingManager {
       }
     }
     pairingLog('[PUBLIC] ❌ Failed to accept pair from $peerId after $maxAttempts attempts');
+
+    // ✅ FIX: Eskiden burada yalnızca log vardı: dot 'requested' durumunda
+    // takılı kalıyor, kullanıcı kabulünün başarısız olduğunu göremiyor,
+    // karşı taraf da 15 sn boşuna bekliyordu. Durumu temizle ve karşıya
+    // (bağlantı kurulabildiyse) ret bildir.
+    _timers.cancel('pending_request_$peerId');
+    _timers.cancel('public_request_expire_$peerId');
+    _pendingPublicRequests.remove(peerId);
+    _pendingRequestsController.add(_pendingPublicRequests.isNotEmpty);
+
+    final failedPeer = _discoveredPeers[peerId];
+    if (failedPeer != null && failedPeer.state == PublicPeerState.requested) {
+      _discoveredPeers[peerId] = failedPeer.copyWith(state: PublicPeerState.idle);
+      _discoveredPeersController.add(_discoveredPeers.values.toList());
+    }
+
+    // Best-effort: karşı taraf beklemesin. Bağlantı yoksa sessizce düşer
+    // (requester kendi 15 sn timeout'uyla zaten temizlenir).
+    blePlugin
+        .send(PairRejectMessage(sid: deviceId, reason: 'accept_failed'))
+        .catchError((_) {});
   }
   
   /// Handle receiving a pair accept in public mode

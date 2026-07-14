@@ -22,7 +22,8 @@ class SensorManager {
   Future<void> start() async {
     sensorLog('📱 Starting sensor manager (throttled to ${1000 ~/ _throttleMs} Hz)');
     
-    _accelerometerSub = accelerometerEvents.listen((event) {
+    // accelerometerEvents deprecated; önerilen stream API'si kullanılıyor.
+    _accelerometerSub = accelerometerEventStream().listen((event) {
       // ✅ OPTIMIZATION: Throttle sensor events to reduce CPU load
       final now = DateTime.now();
       if (_lastProcessTime != null && 

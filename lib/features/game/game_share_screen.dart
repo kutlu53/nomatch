@@ -55,6 +55,9 @@ class _GameShareScreenState extends State<GameShareScreen>
 
   bool _longPressActive = false;
   Timer? _longPressTimer;
+  // ✅ FIX: 3sn basılı tutma çıkışının görsel ilerleme halkası (metinsiz
+  // uygulamada geri bildirimsiz jest keşfedilemiyordu).
+  late AnimationController _longPressProgressController;
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
   bool _transitioning = false;
@@ -134,6 +137,12 @@ class _GameShareScreenState extends State<GameShareScreen>
       CurvedAnimation(parent: _fadeController, curve: Curves.easeInOutCubic),
     );
 
+    // Uzun basma ilerlemesi — 3 saniyede 0.0 → 1.0 (reset jestiyle aynı süre)
+    _longPressProgressController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    );
+
     // ✅ Reconnect pulse animation
     _reconnectPulseController = AnimationController(
       vsync: this,
@@ -174,6 +183,7 @@ class _GameShareScreenState extends State<GameShareScreen>
     _reconnectPulseController.dispose();
     _waitingPulseController.dispose();
     _longPressTimer?.cancel();
+    _longPressProgressController.dispose();
     _fadeController.dispose();
     _autoResetTimer?.cancel();
     super.dispose();
@@ -313,6 +323,7 @@ class _GameShareScreenState extends State<GameShareScreen>
 
   void _onLongPressStart() {
     _ssLog("[SHARE-SCREEN] Long press başladı");
+    _longPressProgressController.forward(from: 0.0);
     setState(() => _longPressActive = true);
 
     _longPressTimer = Timer(const Duration(seconds: 3), () {
@@ -325,6 +336,7 @@ class _GameShareScreenState extends State<GameShareScreen>
   void _onLongPressEnd() {
     _ssLog("[SHARE-SCREEN] Long press bitti");
     _longPressTimer?.cancel();
+    _longPressProgressController.reset();
     setState(() => _longPressActive = false);
   }
 
@@ -696,6 +708,24 @@ class _GameShareScreenState extends State<GameShareScreen>
                 ),
               ),
 
+            // ✅ FIX: 3sn basılı tutma ilerlemesi — kardeş ekranlardaki
+            // ProgressRing deseniyle aynı görsel geri bildirim.
+            if (_longPressActive)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Center(
+                    child: AnimatedBuilder(
+                      animation: _longPressProgressController,
+                      builder: (context, _) => ProgressRing(
+                        value: _longPressProgressController.value,
+                        size: 80,
+                        color: GameColors.purple,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
             // ✅ Fade overlay
             if (_transitioning)
               Positioned.fill(
@@ -753,7 +783,10 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
       duration: const Duration(milliseconds: 800),
     );
 
-    _fadeAnimation = Tween<double>(begin: 1.0, end: 0.0).animate(
+    // ✅ FIX: 0 → 1 (karanlığa geçiş). Reset'te ekran yumuşakça kararıp
+    // kapanır; eskiden animasyon hiçbir widget'a bağlı olmadığından
+    // kullanıcı 800ms donmuş ekrana bakıyordu.
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _fadeController, curve: Curves.easeInOutCubic),
     );
 
@@ -959,6 +992,20 @@ class _GameShareResultScreenState extends State<GameShareResultScreen>
                         size: 80,
                         color: GameColors.purple,
                       ),
+                    ),
+                  ),
+                ),
+              ),
+
+            // ✅ FIX: Reset karartması — _doReset'in 800ms'lik animasyonu
+            // artık ekranda görünüyor (yumuşak kararma, sonra kapanış).
+            if (_transitioning)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: FadeTransition(
+                    opacity: _fadeAnimation,
+                    child: Container(
+                      color: InkPlum.base,
                     ),
                   ),
                 ),

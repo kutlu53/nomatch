@@ -181,7 +181,17 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
       _isPublicModeScanning = true;
       _screenState = ScreenState.scanning;
       widget.pairingManager.setPublicMode(true);
-      widget.pairingManager.startDiscoveryOnly();
+      // ✅ FIX: İlk discovery de mod geçiş kuyruğuna (_modeSwitchOperation)
+      // zincirlenir. Eskiden kuyruk DIŞINDAN çağrılıyordu; kullanıcı hemen
+      // radar'a kayarsa stop() bu başlatmadan önce koşabiliyor ve geç
+      // tamamlanan start BLE'yi yeniden açık bırakıyordu — dosyanın kendi
+      // yorumlarının uyardığı yarışın ta kendisi.
+      final version = _modeSwitchVersion;
+      final previous = _modeSwitchOperation;
+      _modeSwitchOperation = previous.then((_) async {
+        if (!mounted || _modeSwitchVersion != version) return;
+        await widget.pairingManager.startDiscoveryOnly();
+      });
     }
   }
 

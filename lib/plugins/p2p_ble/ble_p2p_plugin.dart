@@ -62,7 +62,7 @@ class BleP2pPlugin {
       _onMessageReceived(arguments);
     } else if (arguments is List && arguments.isNotEmpty) {
       bleLog('📩 Casting arguments to List<int>');
-      final bytes = (arguments as List).cast<int>();
+      final bytes = arguments.cast<int>();
       bleLog('📩 Received write (casted): ${bytes.length} bytes');
       _onMessageReceived(bytes);
     } else {
@@ -73,7 +73,6 @@ class BleP2pPlugin {
   String? _appInstanceId;
   String? _sessionId;
   String? _peerId;
-  bool _isHost = false;
   bool _isScanning = false;
   bool _isAdvertising = false;
   bool _isInitialized = false;
@@ -81,7 +80,6 @@ class BleP2pPlugin {
   
   BluetoothDevice? _connectedDevice;
   BluetoothCharacteristic? _messageChar;
-  BluetoothCharacteristic? _sensorChar;
   bool _isConnecting = false; // Prevent concurrent connection attempts
   
   // ✅ FIX: Store discovered devices for explicit connect()
@@ -153,8 +151,7 @@ class BleP2pPlugin {
       return;
     }
     
-    _isHost = true;
-    _isAdvertising = true;
+_isAdvertising = true;
     
     // Start native BLE advertising
     try {
@@ -188,9 +185,7 @@ class BleP2pPlugin {
       _emitError('permissions_denied', 'Bluetooth permissions not granted');
       return;
     }
-    
-    _isHost = false;
-    await _startScanning();
+        await _startScanning();
     
     _emitStateChanged('discovering');
   }
@@ -240,9 +235,7 @@ class BleP2pPlugin {
     }
 
     _connectedDevice = null;
-    _messageChar = null;
-    _sensorChar = null;
-    _isConnecting = false;
+    _messageChar = null;    _isConnecting = false;
     _peerId = null;
   }
 
@@ -327,9 +320,7 @@ class BleP2pPlugin {
     
     await _disconnect();
     await _stopScanning();
-    
-    _isHost = false;
-    _isAdvertising = false;
+        _isAdvertising = false;
     _peerId = null;
     
     _emitStateChanged('idle');
@@ -390,12 +381,8 @@ class BleP2pPlugin {
     
     // 5. Reset ALL state variables
     _connectedDevice = null;
-    _messageChar = null;
-    _sensorChar = null;
-    _peerId = null;
-    _sessionId = _generateSessionId(); // Fresh session ID
-    _isHost = false;
-    _isScanning = false;
+    _messageChar = null;    _peerId = null;
+    _sessionId = _generateSessionId(); // Fresh session ID    _isScanning = false;
     _isAdvertising = false;
     _isConnecting = false;
     _discoveredDevices.clear(); // ✅ Clear stored devices
@@ -450,9 +437,7 @@ class BleP2pPlugin {
     // Reset state flags
     _isInitialized = false;
     _isScanning = false;
-    _isAdvertising = false;
-    _isHost = false;
-  }
+    _isAdvertising = false;  }
   
   // ============================================================================
   // Private Methods
@@ -674,7 +659,6 @@ class BleP2pPlugin {
             dev.log('[BLE]   ✅ Message notifications enabled (streaming mode)');
           } 
           else if (charUuidStr == BleConstants.sensorCharUuid.toLowerCase()) {
-            _sensorChar = char;
             dev.log('[BLE]   ✅ Sensor characteristic found!');
             await char.setNotifyValue(true);
             _sensorStreamSub = char.onValueReceived.listen((value) {
@@ -727,7 +711,6 @@ class BleP2pPlugin {
       // sessizce atlanıyor ve eşleşme hard reset'e kadar kilitleniyordu.
       _connectedDevice = null;
       _messageChar = null;
-      _sensorChar = null;
       _peerId = null;
       try {
         // Fiziksel link kurulmuş ama servis keşfi patlamış olabilir.
@@ -753,18 +736,14 @@ class BleP2pPlugin {
       dev.log('BLE_P2P: ⚠️ Error disconnecting: $e');
     }
     _connectedDevice = null;
-    _messageChar = null;
-    _sensorChar = null;
-    _isConnecting = false;
+    _messageChar = null;    _isConnecting = false;
   }
   
   void _onDisconnected(String peerId) {
     dev.log('BLE_P2P: Disconnected from $peerId');
     
     _connectedDevice = null;
-    _messageChar = null;
-    _sensorChar = null;
-    
+    _messageChar = null;    
     _emitDisconnected(peerId, 'connection_lost');
   }
   
@@ -908,9 +887,6 @@ class BleP2pPlugin {
       
       // On iOS, these might return undetermined/denied, but app can still work
       // because iOS grants Bluetooth access automatically if declared in Info.plist
-      final allGrantedOrUndetermined = statuses.values.every((status) =>
-          status.isGranted || status.isDenied); // isDenied might happen on iOS
-      
       dev.log('BLE_P2P: Permission statuses: $statuses');
       return true; // Proceed even if permission status is unclear
     } catch (e) {
