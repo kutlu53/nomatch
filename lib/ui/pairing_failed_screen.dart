@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../app/pairing_manager.dart';
 import '../theme/app_background.dart';
 import 'anim/diverge_animation.dart';
@@ -23,9 +24,16 @@ class _PairingFailedScreenState extends State<PairingFailedScreen> {
   void initState() {
     super.initState();
 
-    // 4 saniye animasyon → hardReset → radar ekranı idle durumda açılır.
-    // Kullanıcı üçgene dokunarak taramayı başlatır; otomatik başlatma yok.
-    Future.delayed(const Duration(milliseconds: 4000), () async {
+    // ✅ UI: Başarısızlık anına dokunsal geri bildirim — girişte orta darbe,
+    // bağın koptuğu anda (animasyonun 0.7'si ≈ 2450ms) hafif bir tık.
+    HapticFeedback.mediumImpact();
+    Future.delayed(const Duration(milliseconds: 2450), () {
+      if (mounted) HapticFeedback.lightImpact();
+    });
+
+    // ✅ UI: 4000ms → 3600ms — animasyon 3.5sn'de bitiyor; kullanıcıyı boş
+    // ekranda yarım saniye bekletme. Router'daki çapraz solma dönüşü yumuşatır.
+    Future.delayed(const Duration(milliseconds: 3600), () async {
       if (!mounted) return;
       await widget.pairingManager.hardReset();
     });

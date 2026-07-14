@@ -30,26 +30,36 @@ class AppRouter extends StatelessWidget {
     final state = viewState.pairingState;
     dev.log('AppRouter: state=$state');
 
-    return switch (state) {
+    final screen = switch (state) {
       // Pairing states -> PairingScreen
       PairingState.idle ||
       PairingState.hostingReady ||
       PairingState.peerSearching ||
       PairingState.preConnected ||
       PairingState.headingValidating ||
-      PairingState.connected => 
+      PairingState.connected =>
         PairingScreen(pairingManager: pairingManager, state: viewState),
-      
+
       // Game states -> GameScreen
-      PairingState.game || 
-      PairingState.gameReady || 
-      PairingState.playing => 
+      PairingState.game ||
+      PairingState.gameReady ||
+      PairingState.playing =>
         _buildGameScreen(context),
-      
+
       // Failed state -> PairingFailedScreen
-      PairingState.failed => 
+      PairingState.failed =>
         PairingFailedScreen(pairingManager: pairingManager),
     };
+
+    // ✅ UI: Ekran takasları ham kesme yerine 300ms çapraz solma. Aynı tip
+    // ekranın yeniden kurulumları (ör. PairingScreen state güncellemeleri)
+    // animasyon tetiklemez; yalnızca ekran TİPİ değişince solar.
+    return AnimatedSwitcher(
+      duration: Motion.base,
+      switchInCurve: Motion.decelerate,
+      switchOutCurve: Motion.accelerate,
+      child: screen,
+    );
   }
   
   Widget _buildGameScreen(BuildContext context) {
