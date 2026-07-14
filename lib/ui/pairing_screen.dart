@@ -12,6 +12,7 @@ import '../features/pairing/flashlight_signal.dart';
 import '../services/notification_service.dart';
 import '../theme/game_colors.dart';
 import '../theme/design_tokens.dart';
+import 'radar/radar_rings_painter.dart';
 import 'start/start_triangle_button.dart';
 import 'widgets/radar_pairing_view.dart';
 import 'widgets/public_pairing_view.dart';
@@ -486,15 +487,35 @@ class _PairingScreenState extends State<PairingScreen> with TickerProviderStateM
                     scale: radarScale,
                     child: Opacity(
                       opacity: isTransitioning ? transitionOpacity : 1.0,
-                      child: RadarPairingView(
-                        focusCandidatePeerId: widget.pairingManager.peerId,
-                        focusCandidateLocked: pairingState == PairingState.preConnected,
-                        pairHandshakeComplete: pairingState == PairingState.connected,
-                        isConnectingTransition: pairingState == PairingState.preConnected,
-                        isScanning: isScanning,
-                        collapseProgress: 0.0,
-                        freezeOpacity: radarOpacity,
-                        alertOpacity: _headingAlertAnimation.value,
+                      child: Stack(
+                        children: [
+                          // ✅ UI: Radar halkaları — public sayfada vardı ama
+                          // radar sayfasına hiç eklenmemişti; üçgen düz zeminde
+                          // yalnız kalıyordu. Boşta nefes, taramada sıralı atım,
+                          // eşleşmede merkeze çökme (yazılmış ama hiç
+                          // kullanılmamış collapse animasyonu) ve yön doğrulama
+                          // uyarısında kırmızı pulse (alertOpacity artık görünür).
+                          RadarRingsWidget(
+                            isScanning: isScanning,
+                            collapseProgress:
+                                isMatched ? _matchController.value : 0.0,
+                            freezeOpacity: isMatched ? 0.08 : null,
+                            alertOpacity: _headingAlertAnimation.value,
+                          ),
+                          RadarPairingView(
+                            focusCandidatePeerId: widget.pairingManager.peerId,
+                            focusCandidateLocked:
+                                pairingState == PairingState.preConnected,
+                            pairHandshakeComplete:
+                                pairingState == PairingState.connected,
+                            isConnectingTransition:
+                                pairingState == PairingState.preConnected,
+                            isScanning: isScanning,
+                            collapseProgress: 0.0,
+                            freezeOpacity: radarOpacity,
+                            alertOpacity: _headingAlertAnimation.value,
+                          ),
+                        ],
                       ),
                     ),
                   ),

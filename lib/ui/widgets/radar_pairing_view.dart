@@ -3,6 +3,8 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 
+import '../../theme/game_colors.dart';
+
 class RadarPairingView extends StatefulWidget {
   final String? focusCandidatePeerId;
   final bool focusCandidateLocked;
@@ -81,8 +83,9 @@ class _RadarPairingViewState extends State<RadarPairingView> with TickerProvider
     _transitionController?.dispose();
     _transitionController = AnimationController(
       vsync: this,
-      // ✅ ENHANCED: Longer animation (3 seconds) for dramatic effect
-      duration: const Duration(milliseconds: 3000),
+      // ✅ UI: 3000ms → 2200ms — ilk saniyedeki boş bekleyiş kırpıldı,
+      // dramatik his korunuyor (halkalar artık daha yakından başlıyor).
+      duration: const Duration(milliseconds: 2200),
     );
     _transitionAnimation = CurvedAnimation(
       parent: _transitionController!,
@@ -174,7 +177,8 @@ class _RadarPainter extends CustomPainter {
       final segmentOpacity = (i / segmentCount) * 0.4 + 0.1;  // Daha hafif
 
       final spinnerPaint = Paint()
-        ..color = Colors.cyan.withValues(alpha: segmentOpacity)
+        // ✅ UI: Palet dışı cyan yerine marka moru.
+        ..color = GameColors.purple.withValues(alpha: segmentOpacity)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.8  // Daha ince
         ..strokeCap = StrokeCap.round;
@@ -190,7 +194,7 @@ class _RadarPainter extends CustomPainter {
 
     // ✨ Çok hafif outer ring
     final outerSpinnerPaint = Paint()
-      ..color = Colors.cyan.withValues(alpha: 0.08)
+      ..color = GameColors.purple.withValues(alpha: 0.08)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
     canvas.drawCircle(center, spinnerRadius * 1.2, outerSpinnerPaint);
@@ -221,7 +225,9 @@ class _ConnectionTransitionPainter extends CustomPainter {
     final radius = math.min(size.width, size.height) * 0.42;
 
     final targetPosition = center;
-    const targetColor = Colors.cyan;
+    // ✅ UI: Palet dışı cyan yerine marka moru; halkalar birleşmeye
+    // yaklaştıkça lime'a ısınır (mor=bağlanıyor → lime=oldu hikâyesi).
+    const targetColor = GameColors.purple;
 
     // Animation phases:
     // 0.0 - 0.3: Target peer brightens
@@ -251,18 +257,23 @@ class _ConnectionTransitionPainter extends CustomPainter {
       final ringT = ((t - 0.2) / 0.55).clamp(0.0, 1.0);
       final easeT = Curves.easeInOut.transform(ringT);
 
-      // ✅ ENHANCED: Rings start further out for more dramatic effect
-      final ring1Start = radius * 1.5;
-      final ring2Start = radius * 1.8;
+      // ✅ UI: Halkalar daha yakından başlar (1.5/1.8 → 1.15/1.35) —
+      // kısalan sürede ilk karelerin boş geçmesi önlenir.
+      final ring1Start = radius * 1.15;
+      final ring2Start = radius * 1.35;
       final ring1Radius = lerpDouble(ring1Start, 0, easeT)!;
       final ring2Radius = lerpDouble(ring2Start, 0, easeT)!;
 
       // ✅ ENHANCED: Opacity increases more dramatically
       final ringOpacity = lerpDouble(0.1, 1.0, ringT)!;
 
+      // ✅ UI: Birleşmeye yaklaştıkça mor lime'a ısınır.
+      final ringColor =
+          Color.lerp(targetColor, GameColors.lime, easeT * 0.6)!;
+
       // ✅ ENHANCED: Thicker and more glowing
       final ringPaint = Paint()
-        ..color = targetColor.withValues(alpha: ringOpacity)
+        ..color = ringColor.withValues(alpha: ringOpacity)
         ..style = PaintingStyle.stroke
         ..strokeWidth = lerpDouble(3.0, 16.0, ringT)! // Much thicker
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, lerpDouble(6.0, 20.0, ringT)!); // More glow
@@ -281,7 +292,7 @@ class _ConnectionTransitionPainter extends CustomPainter {
         final mergeOpacity = lerpDouble(0.0, 0.8, mergeT)!;
 
         final mergePaint = Paint()
-          ..color = targetColor.withValues(alpha: mergeOpacity)
+          ..color = ringColor.withValues(alpha: mergeOpacity)
           ..maskFilter = MaskFilter.blur(BlurStyle.normal, mergeRadius * 1.2);
         canvas.drawCircle(center, mergeRadius, mergePaint);
       }
@@ -291,20 +302,21 @@ class _ConnectionTransitionPainter extends CustomPainter {
     if (t >= 0.75) {
       final fadeT = ((t - 0.75) / 0.25).clamp(0.0, 1.0);
 
-      // ✅ ENHANCED: Background circle fades out more gradually
+      // ✅ UI: Kavuşma sonrası fon parlaması lime — tik ve üçgenin lime
+      // dönüşüyle tek renk hikâyesi.
       final fadeOpacity = lerpDouble(0.8, 0.0, fadeT)!;
       final fadeRadius = lerpDouble(radius * 0.4, radius * 0.8, fadeT)!;
 
       final fadePaint = Paint()
-        ..color = targetColor.withValues(alpha: fadeOpacity)
+        ..color = GameColors.lime.withValues(alpha: fadeOpacity * 0.7)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, fadeRadius * 0.8);
       canvas.drawCircle(center, fadeRadius, fadePaint);
 
-      // ✅ ENHANCED: Green checkmark - much more prominent
+      // ✅ UI: Onay tiki Material yeşili yerine marka lime'ı.
       final pulseWave = math.sin(fadeT * math.pi * 2) * 0.2; // Double pulse frequency
-      final checkOpacity = 0.95; // Much brighter
+      const checkOpacity = 0.95; // Much brighter
       final checkRadius = radius * (0.25 + fadeT * 0.2 + pulseWave);
-      _drawCheckmark(canvas, center, checkRadius, Colors.green.shade400, checkOpacity);
+      _drawCheckmark(canvas, center, checkRadius, GameColors.lime, checkOpacity);
     }
   }
 
